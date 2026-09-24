@@ -21,4 +21,9 @@ SyncSpace is a real-time collaborative workspace designed to offer synchronous m
                                       ||                               ||
 [Client B (Browser)] <====> [ Awareness Protocol ]                     ||
                                       ||                         [ MongoDB Store ]
-                                (Cursor & State)                   (Binary Diffs)
+                                (Cursor & State)                   (Binary Diffs)## Week 3 Integration: Monaco Editor & Persistent State Engine
+- Dual-pane layout integrated with Monaco Code Editor.
+- Shared text binding wired via y-monaco directly to Yjs CRDT model.
+- Socket.io pipeline extended for code updates and language switching.
+- Debounced binary serialization worker configured for periodic MongoDB saves.
+- Document recovery controller active to reload binary state on server restarts.
