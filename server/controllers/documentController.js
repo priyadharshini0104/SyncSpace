@@ -25,3 +25,23 @@ export async function saveDocumentState(req, res) {
     return res.status(500).json({ error: 'Failed to save document state', details: err.message });
   }
 }
+
+// saving an incoming client change
+async function handleIncomingDelta(docId, updateBuffer) {
+  try {
+    const updatedDoc = await Document.append(docId, updateBuffer);
+  } catch (error) {
+    console.error("Failed to index update:", error);
+  }
+}
+
+// syncing a client that just reconnected
+async function syncMissingState(docId, clientLastKnownVersion) {
+  // Fetch only the missing chunks from the replay buffer
+  const missedUpdates = await Document.getUpdatesSince(docId, clientLastKnownVersion);
+
+  // extract just raw binary buffer
+  const buffersToApply = missedUpdates.map(log => log.updateBuffer);
+
+  return buffersToApply;
+}
