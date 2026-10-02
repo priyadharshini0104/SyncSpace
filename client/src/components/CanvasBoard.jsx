@@ -1,10 +1,14 @@
 import React, { useRef, useState, useEffect } from 'react';
-import io from 'socket.io-client';
+import socket from '../socket';
 
-const socket = io('http://localhost:5000');
+// Ovvoru tab-kkum unique User ID and distinct color assign aagum
+const currentUserId = 'User #' + Math.random().toString(36).substring(2, 6).toUpperCase();
+const userColors = ['#f43f5e', '#8b5cf6', '#06b6d4', '#10b981', '#f59e0b', '#ec4899'];
+const myCursorColor = userColors[Math.floor(Math.random() * userColors.length)];
 
 const CanvasBoard = ({ replayFrame }) => {
   const canvasRef = useRef(null);
+  const containerRef = useRef(null);
   const [tool, setTool] = useState('pen');
   const [strokeColor, setStrokeColor] = useState('#2563eb');
   const [lineWidth, setLineWidth] = useState(3);
@@ -12,8 +16,7 @@ const CanvasBoard = ({ replayFrame }) => {
   const [startPos, setStartPos] = useState({ x: 0, y: 0 });
   const [snapshot, setSnapshot] = useState(null);
   const [history, setHistory] = useState([]);
-  const [textInput, setTextInput] = useState('');
-  const [textPos, setTextPos] = useState(null);
+  const [remoteCursors, setRemoteCursors] = useState({});
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -24,15 +27,44 @@ const CanvasBoard = ({ replayFrame }) => {
     ctx.fillStyle = '#ffffff';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-    socket.emit('join-room', 'demo-room');
+    // Pazhaya drawings pudhu tab open pannumbodhu load aagum
+    socket.on('initial-canvas-state', (items) => {
+      if (Array.isArray(items)) {
+        items.forEach((item) => renderShape(ctx, item));
+        setHistory(items);
+      }
+    });
 
     socket.on('canvas-draw', (item) => {
       renderShape(ctx, item);
       setHistory((prev) => [...prev, item]);
     });
 
+    socket.on('cursor-move', (data) => {
+      setRemoteCursors((prev) => ({
+        ...prev,
+        [data.socketId]: { 
+          x: data.x, 
+          y: data.y, 
+          user: data.user,
+          color: data.color || '#f43f5e'
+        }
+      }));
+    });
+
+    socket.on('user-left', (id) => {
+      setRemoteCursors((prev) => {
+        const copy = { ...prev };
+        delete copy[id];
+        return copy;
+      });
+    });
+
     return () => {
+      socket.off('initial-canvas-state');
       socket.off('canvas-draw');
+      socket.off('cursor-move');
+      socket.off('user-left');
     };
   }, []);
 
@@ -43,7 +75,7 @@ const CanvasBoard = ({ replayFrame }) => {
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
 
-    const { type, x0, y0, x1, y1, text } = item;
+    const { type, x0, y0, x1, y1 } = item;
 
     if (type === 'line') {
       ctx.beginPath();
@@ -80,59 +112,29 @@ const CanvasBoard = ({ replayFrame }) => {
       ctx.lineTo(x1 - head * Math.cos(angle + Math.PI / 6), y1 - head * Math.sin(angle + Math.PI / 6));
       ctx.closePath();
       ctx.fill();
-    } else if (type === 'text') {
-      ctx.font = '16px sans-serif';
-      ctx.fillText(text, x0, y0);
     } else if (type === 'clear') {
       ctx.fillStyle = '#ffffff';
       ctx.fillRect(0, 0, canvasRef.current.width, canvasRef.current.height);
     }
   };
 
-  // Replay scrubbing execution (Week 4 Requirement)
-  useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas || history.length === 0) return;
-    const ctx = canvas.getContext('2d');
-    ctx.fillStyle = '#ffffff';
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-    const count = Math.round((replayFrame / 50) * history.length);
-    for (let i = 0; i < count; i++) {
-      renderShape(ctx, history[i]);
-    }
-  }, [replayFrame]);
-
   const getCoords = (e) => {
     const rect = canvasRef.current.getBoundingClientRect();
     return { x: e.clientX - rect.left, y: e.clientY - rect.top };
   };
 
-  const handleMouseDown = (e) => {
+  const handlePointerMove = (e) => {
     const { x, y } = getCoords(e);
-    if (tool === 'text') {
-      setTextPos({ x, y });
-      return;
-    }
+    // Real dynamic user ID mattrum unique color broadcast aagum
+    socket.emit('cursor-move', { 
+      room: 'demo-room', 
+      x, 
+      y, 
+      user: currentUserId,
+      color: myCursorColor
+    });
 
-    const canvas = canvasRef.current;
-    const ctx = canvas.getContext('2d');
-    setIsDrawing(true);
-    setStartPos({ x, y });
-    setSnapshot(ctx.getImageData(0, 0, canvas.width, canvas.height));
-
-    if (tool === 'pen' || tool === 'eraser') {
-      ctx.beginPath();
-      ctx.moveTo(x, y);
-      ctx.strokeStyle = tool === 'eraser' ? '#ffffff' : strokeColor;
-      ctx.lineWidth = tool === 'eraser' ? 24 : lineWidth;
-      ctx.lineCap = 'round';
-    }
-  };
-
-  const handleMouseMove = (e) => {
     if (!isDrawing) return;
-    const { x, y } = getCoords(e);
     const canvas = canvasRef.current;
     const ctx = canvas.getContext('2d');
 
@@ -159,6 +161,23 @@ const CanvasBoard = ({ replayFrame }) => {
     }
   };
 
+  const handleMouseDown = (e) => {
+    const { x, y } = getCoords(e);
+    const canvas = canvasRef.current;
+    const ctx = canvas.getContext('2d');
+    setIsDrawing(true);
+    setStartPos({ x, y });
+    setSnapshot(ctx.getImageData(0, 0, canvas.width, canvas.height));
+
+    if (tool === 'pen' || tool === 'eraser') {
+      ctx.beginPath();
+      ctx.moveTo(x, y);
+      ctx.strokeStyle = tool === 'eraser' ? '#ffffff' : strokeColor;
+      ctx.lineWidth = tool === 'eraser' ? 24 : lineWidth;
+      ctx.lineCap = 'round';
+    }
+  };
+
   const handleMouseUp = (e) => {
     if (!isDrawing) return;
     setIsDrawing(false);
@@ -171,17 +190,6 @@ const CanvasBoard = ({ replayFrame }) => {
     }
   };
 
-  const submitText = () => {
-    if (!textInput || !textPos) return;
-    const item = { room: 'demo-room', type: 'text', text: textInput, x0: textPos.x, y0: textPos.y, color: strokeColor };
-    const ctx = canvasRef.current.getContext('2d');
-    renderShape(ctx, item);
-    socket.emit('canvas-draw', item);
-    setHistory((prev) => [...prev, item]);
-    setTextInput('');
-    setTextPos(null);
-  };
-
   const clearCanvas = () => {
     const canvas = canvasRef.current;
     const ctx = canvas.getContext('2d');
@@ -192,8 +200,7 @@ const CanvasBoard = ({ replayFrame }) => {
   };
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', background: '#ffffff', position: 'relative' }}>
-      {/* Advanced Toolbar */}
+    <div ref={containerRef} style={{ display: 'flex', flexDirection: 'column', height: '100%', background: '#ffffff', position: 'relative' }}>
       <div style={{
         display: 'flex',
         flexWrap: 'wrap',
@@ -203,12 +210,11 @@ const CanvasBoard = ({ replayFrame }) => {
         background: '#f8fafc',
         borderBottom: '1px solid #e2e8f0'
       }}>
-        <button onClick={() => setTool('pen')} style={{ padding: '5px 10px', borderRadius: '4px', background: tool === 'pen' ? '#2563eb' : '#e2e8f0', color: tool === 'pen' ? '#fff' : '#000', border: 'none', cursor: 'pointer', fontWeight: 'bold' }}>✏️ Pen</button>
+        <button onClick={() => setTool('pen')} style={{ padding: '5px 10px', borderRadius: '4px', background: tool === 'pen' ? '#2563eb' : '#e2e8f0', color: tool === 'pen' ? '#fff' : '#000', border: 'none', cursor: 'pointer', fontWeight: 'bold' }}>✏️️ Pen</button>
         <button onClick={() => setTool('rect')} style={{ padding: '5px 10px', borderRadius: '4px', background: tool === 'rect' ? '#2563eb' : '#e2e8f0', color: tool === 'rect' ? '#fff' : '#000', border: 'none', cursor: 'pointer', fontWeight: 'bold' }}>▭ Rectangle</button>
         <button onClick={() => setTool('circle')} style={{ padding: '5px 10px', borderRadius: '4px', background: tool === 'circle' ? '#2563eb' : '#e2e8f0', color: tool === 'circle' ? '#fff' : '#000', border: 'none', cursor: 'pointer', fontWeight: 'bold' }}>⭕ Circle</button>
         <button onClick={() => setTool('diamond')} style={{ padding: '5px 10px', borderRadius: '4px', background: tool === 'diamond' ? '#2563eb' : '#e2e8f0', color: tool === 'diamond' ? '#fff' : '#000', border: 'none', cursor: 'pointer', fontWeight: 'bold' }}>◇ Diamond</button>
         <button onClick={() => setTool('arrow')} style={{ padding: '5px 10px', borderRadius: '4px', background: tool === 'arrow' ? '#2563eb' : '#e2e8f0', color: tool === 'arrow' ? '#fff' : '#000', border: 'none', cursor: 'pointer', fontWeight: 'bold' }}>➔ Arrow</button>
-        <button onClick={() => setTool('text')} style={{ padding: '5px 10px', borderRadius: '4px', background: tool === 'text' ? '#2563eb' : '#e2e8f0', color: tool === 'text' ? '#fff' : '#000', border: 'none', cursor: 'pointer', fontWeight: 'bold' }}>🔤 Text</button>
         <button onClick={() => setTool('eraser')} style={{ padding: '5px 10px', borderRadius: '4px', background: tool === 'eraser' ? '#ef4444' : '#e2e8f0', color: tool === 'eraser' ? '#fff' : '#000', border: 'none', cursor: 'pointer', fontWeight: 'bold' }}>🧹 Eraser</button>
         <button onClick={clearCanvas} style={{ padding: '5px 10px', borderRadius: '4px', background: '#64748b', color: '#fff', border: 'none', cursor: 'pointer', fontWeight: 'bold' }}>🗑 Clear</button>
 
@@ -223,24 +229,46 @@ const CanvasBoard = ({ replayFrame }) => {
         <input type="color" value={strokeColor} onChange={(e) => setStrokeColor(e.target.value)} style={{ width: '28px', height: '28px', border: 'none', cursor: 'pointer' }} />
       </div>
 
-      {/* Floating Text Dialog when Text Tool is clicked */}
-      {textPos && (
-        <div style={{ position: 'absolute', left: textPos.x, top: textPos.y, zIndex: 10, background: '#fff', padding: '6px', border: '1px solid #000', borderRadius: '4px', display: 'flex', gap: '4px' }}>
-          <input autoFocus type="text" placeholder="Type text..." value={textInput} onChange={(e) => setTextInput(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && submitText()} style={{ padding: '4px', fontSize: '13px' }} />
-          <button onClick={submitText} style={{ padding: '4px 8px', background: '#2563eb', color: '#fff', border: 'none', borderRadius: '4px' }}>Add</button>
-        </div>
-      )}
-
-      {/* Canvas Area */}
-      <div style={{ flex: 1, position: 'relative', width: '100%', height: '100%' }}>
+      <div style={{ flex: 1, position: 'relative', width: '100%', height: '100%', overflow: 'hidden' }}>
         <canvas
           ref={canvasRef}
           onMouseDown={handleMouseDown}
-          onMouseMove={handleMouseMove}
+          onMouseMove={handlePointerMove}
           onMouseUp={handleMouseUp}
           onMouseLeave={handleMouseUp}
-          style={{ display: 'block', width: '100%', height: '100%', cursor: tool === 'text' ? 'text' : tool === 'eraser' ? 'cell' : 'crosshair' }}
+          style={{ display: 'block', width: '100%', height: '100%', cursor: tool === 'eraser' ? 'cell' : 'crosshair' }}
         />
+
+        {/* Dynamic Cursors with Random User ID Tag */}
+        {Object.entries(remoteCursors).map(([id, cursor]) => (
+          <div key={id} style={{
+            position: 'absolute',
+            left: `${cursor.x}px`,
+            top: `${cursor.y}px`,
+            pointerEvents: 'none',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '4px',
+            zIndex: 50,
+            transform: 'translate(-2px, -2px)'
+          }}>
+            <svg width="20" height="20" viewBox="0 0 24 24" fill={cursor.color}>
+              <path d="M3 3l7 18 3-7 7-3L3 3z" />
+            </svg>
+            <span style={{
+              background: cursor.color,
+              color: '#ffffff',
+              fontSize: '11px',
+              padding: '2px 8px',
+              borderRadius: '12px',
+              fontWeight: 'bold',
+              whiteSpace: 'nowrap',
+              boxShadow: '0 2px 4px rgba(0,0,0,0.2)'
+            }}>
+              {cursor.user}
+            </span>
+          </div>
+        ))}
       </div>
     </div>
   );

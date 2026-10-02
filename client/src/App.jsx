@@ -2,11 +2,7 @@ import React, { useState, useEffect } from 'react';
 import CanvasBoard from './components/CanvasBoard';
 import CodeEditor from './components/CodeEditor';
 import SessionReplayBar from './components/SessionReplayBar';
-import io from 'socket.io-client';
-
-const socket = io('http://localhost:5000', {
-  transports: ['websocket', 'polling']
-});
+import socket from './socket';
 
 function App() {
   const [replayFrame, setReplayFrame] = useState(0);
@@ -16,9 +12,7 @@ function App() {
     socket.emit('join-room', 'demo-room');
 
     socket.on('room-users', (count) => {
-      if (typeof count === 'number') {
-        setPeerCount(count);
-      }
+      setPeerCount(count);
     });
 
     return () => {
@@ -28,7 +22,6 @@ function App() {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', background: '#0f172a', color: '#fff' }}>
-      {/* Top Header */}
       <header style={{
         display: 'flex',
         justifyContent: 'space-between',
@@ -51,7 +44,6 @@ function App() {
         </div>
       </header>
 
-      {/* Week 4 Session Replay Bar */}
       <div style={{ padding: '0 16px', background: '#111827' }}>
         <SessionReplayBar 
           totalSnapshots={50} 
@@ -59,14 +51,10 @@ function App() {
         />
       </div>
 
-      {/* Split Workspace */}
       <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
-        {/* Left: Whiteboard Canvas */}
         <div style={{ flex: 1, borderRight: '2px solid #1e293b', position: 'relative' }}>
           <CanvasBoard replayFrame={replayFrame} />
         </div>
-
-        {/* Right: Code Editor */}
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
           <CodeEditor />
         </div>
