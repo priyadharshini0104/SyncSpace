@@ -9,70 +9,74 @@ const server = http.createServer(app);
 app.use(cors({ origin: '*', methods: ['GET', 'POST', 'PUT', 'DELETE'] }));
 app.use(express.json());
 
-const sessionHistoryStore = new Map();
-const roomUsers = new Map();
+// In-Memory store to remember canvas strokes for new tabs
+const roomDrawHistory = new Map();
 
 app.get('/api/health', (req, res) => {
-  res.status(200).json({ status: 'ok', message: 'SyncSpace Server is healthy and active' });
-});
-
-app.post('/api/sessions/snapshot', (req, res) => {
-  const { sessionId, snapshotData, author } = req.body;
-  if (!sessionId || !snapshotData) return res.status(400).json({ error: 'Missing fields' });
-  if (!sessionHistoryStore.has(sessionId)) sessionHistoryStore.set(sessionId, []);
-  
-  const snapshotEntry = { id: Date.now(), timestamp: new Date().toISOString(), author: author || 'anonymous', data: snapshotData };
-  sessionHistoryStore.get(sessionId).push(snapshotEntry);
-  return res.status(201).json({ success: true, snapshot: snapshotEntry });
-});
-
-app.get('/api/sessions/:sessionId/history', (req, res) => {
-  const { sessionId } = req.params;
-  const history = sessionHistoryStore.get(sessionId) || [];
-  return res.status(200).json({ sessionId, totalSnapshots: history.length, history });
+  res.status(200).json({ status: 'ok', message: 'SyncSpace Server Active' });
 });
 
 const io = new Server(server, { cors: { origin: '*', methods: ['GET', 'POST'] } });
 
 io.on('connection', (socket) => {
-  let currentRoom = 'demo-room';
+  let userRoom = 'demo-room';
 
   socket.on('join-room', (roomId) => {
-    currentRoom = roomId || 'demo-room';
-    socket.join(currentRoom);
+    userRoom = roomId || 'demo-room';
+    socket.join(userRoom);
 
-    if (!roomUsers.has(currentRoom)) roomUsers.set(currentRoom, new Set());
-    roomUsers.get(currentRoom).add(socket.id);
+    // 1. Send all existing drawing history to the newly joined tab
+    if (!roomDrawHistory.has(userRoom)) {
+      roomDrawHistory.set(userRoom, []);
+    }
+    socket.emit('initial-canvas-state', roomDrawHistory.get(userRoom));
 
-    io.to(currentRoom).emit('room-users', roomUsers.get(currentRoom).size);
+    // 2. Broadcast accurate room users count
+    const clients = io.sockets.adapter.rooms.get(userRoom);
+    io.to(userRoom).emit('room-users', clients ? clients.size : 1);
   });
 
   socket.on('canvas-draw', (data) => {
-    socket.to(data.room || 'demo-room').emit('canvas-draw', data);
+    const room = data.room || 'demo-room';
+    if (!roomDrawHistory.has(room)) roomDrawHistory.set(room, []);
+
+    if (data.type === 'clear') {
+      roomDrawHistory.set(room, []);
+    } else {
+      roomDrawHistory.get(room).push(data);
+    }
+
+    socket.to(room).emit('canvas-draw', data);
   });
 
   socket.on('cursor-move', (data) => {
-    socket.to(data.room || 'demo-room').emit('cursor-move', {
+    const room = data.room || 'demo-room';
+    socket.to(room).emit('cursor-move', {
       socketId: socket.id,
       x: data.x,
       y: data.y,
-      user: data.user
+      user: data.user || 'Collaborator'
     });
   });
 
   socket.on('code-change', (data) => {
-    socket.to(data.room || 'demo-room').emit('code-change', data);
+    const room = data.room || 'demo-room';
+    socket.to(room).emit('code-change', data);
   });
 
-  socket.on('disconnect', () => {
-    if (roomUsers.has(currentRoom)) {
-      roomUsers.get(currentRoom).delete(socket.id);
-      io.to(currentRoom).emit('room-users', roomUsers.get(currentRoom).size);
+  socket.on('disconnecting', () => {
+    for (const room of socket.rooms) {
+      if (room !== socket.id) {
+        const clients = io.sockets.adapter.rooms.get(room);
+        const count = clients ? clients.size - 1 : 0;
+        io.to(room).emit('room-users', Math.max(1, count));
+        io.to(room).emit('user-left', socket.id);
+      }
     }
   });
 });
 
 const PORT = process.env.PORT || 5000;
 server.listen(PORT, () => {
-  console.log(`SyncSpace Socket & API Server running on port ${PORT}`);
+  console.log(`SyncSpace Server running on port ${PORT}`);
 });
