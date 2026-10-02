@@ -1,10 +1,30 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import CanvasBoard from './components/CanvasBoard';
 import CodeEditor from './components/CodeEditor';
 import SessionReplayBar from './components/SessionReplayBar';
+import io from 'socket.io-client';
+
+const socket = io('http://localhost:5000', {
+  transports: ['websocket', 'polling']
+});
 
 function App() {
   const [replayFrame, setReplayFrame] = useState(0);
+  const [peerCount, setPeerCount] = useState(1);
+
+  useEffect(() => {
+    socket.emit('join-room', 'demo-room');
+
+    socket.on('room-users', (count) => {
+      if (typeof count === 'number') {
+        setPeerCount(count);
+      }
+    });
+
+    return () => {
+      socket.off('room-users');
+    };
+  }, []);
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', background: '#0f172a', color: '#fff' }}>
@@ -22,14 +42,16 @@ function App() {
           <span style={{ fontSize: '12px', color: '#94a3b8' }}>Real-Time Collaborative Workspace & Architecture IDE</span>
         </div>
         <div style={{ display: 'flex', gap: '16px', alignItems: 'center' }}>
-          <span style={{ background: '#059669', padding: '4px 10px', borderRadius: '12px', fontSize: '12px' }}>
+          <span style={{ background: '#059669', padding: '4px 10px', borderRadius: '12px', fontSize: '12px', fontWeight: 'bold' }}>
             ● Live Sync (CRDT Active)
           </span>
-          <span style={{ fontSize: '13px', color: '#cbd5e1' }}>Room: <b>demo-room</b> (3 peers)</span>
+          <span style={{ fontSize: '13px', color: '#cbd5e1' }}>
+            Room: <b>demo-room</b> ({peerCount} {peerCount === 1 ? 'peer' : 'peers'})
+          </span>
         </div>
       </header>
 
-      {/* Week 4 Session Replay Bar Integration */}
+      {/* Week 4 Session Replay Bar */}
       <div style={{ padding: '0 16px', background: '#111827' }}>
         <SessionReplayBar 
           totalSnapshots={50} 
@@ -44,14 +66,9 @@ function App() {
           <CanvasBoard replayFrame={replayFrame} />
         </div>
 
-        {/* Right: Monaco Code Editor */}
+        {/* Right: Code Editor */}
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
-          <div style={{ padding: '8px 16px', background: '#1e293b', fontSize: '13px', fontWeight: '600' }}>
-            Monaco Editor (Yjs Bound)
-          </div>
-          <div style={{ flex: 1 }}>
-            <CodeEditor />
-          </div>
+          <CodeEditor />
         </div>
       </div>
     </div>
