@@ -1,226 +1,101 @@
-import cors from "cors";
-import "dotenv/config";
-import express from "express";
-import http from "http";
-import mongoose from "mongoose";
-import { Server } from "socket.io";
-import * as Y from "yjs";
+import express from 'express';
+import http from 'http';
+import { Server } from 'socket.io';
+import cors from 'cors';
 
 const app = express();
 const server = http.createServer(app);
 
-const PORT = process.env.PORT || 5000;
-
-app.use(cors());
+// CORS and JSON Configuration
+app.use(cors({
+  origin: '*',
+  methods: ['GET', 'POST', 'PUT', 'DELETE']
+}));
 app.use(express.json());
 
+// In-Memory Storage for Snapshots & History (Member 6)
+const sessionHistoryStore = new Map();
+
+// REST Health Check & Root API
+app.get('/api/health', (req, res) => {
+  res.status(200).json({ status: 'ok', message: 'SyncSpace Server is healthy and active' });
+});
+
+// Session History Persistence Endpoints
+app.post('/api/sessions/snapshot', (req, res) => {
+  const { sessionId, snapshotData, author } = req.body;
+  if (!sessionId || !snapshotData) {
+    return res.status(400).json({ error: 'sessionId and snapshotData are required' });
+  }
+
+  if (!sessionHistoryStore.has(sessionId)) {
+    sessionHistoryStore.set(sessionId, []);
+  }
+
+  const snapshotEntry = {
+    id: Date.now(),
+    timestamp: new Date().toISOString(),
+    author: author || 'anonymous',
+    data: snapshotData
+  };
+
+  sessionHistoryStore.get(sessionId).push(snapshotEntry);
+  return res.status(201).json({ success: true, snapshot: snapshotEntry });
+});
+
+app.get('/api/sessions/:sessionId/history', (req, res) => {
+  const { sessionId } = req.params;
+  const history = sessionHistoryStore.get(sessionId) || [];
+  return res.status(200).json({ sessionId, totalSnapshots: history.length, history });
+});
+
+// Socket.io Real-Time Synchronization Engine
 const io = new Server(server, {
   cors: {
-    origin: "*",
-    methods: ["GET", "POST"]
+    origin: '*',
+    methods: ['GET', 'POST']
   }
 });
 
-const documents = new Map();
+io.on('connection', (socket) => {
+  console.log(`[Socket Connected]: ${socket.id}`);
 
-function getDocument(roomId) {
-  if (!documents.has(roomId)) {
-    documents.set(roomId, new Y.Doc());
-  }
-  return documents.get(roomId);
-}
-
-app.get("/", (req, res) => {
-  res.json({
-    success: true,
-    message: "SyncSpace Server Running"
-  });
-});
-
-app.get("/api/health", (req, res) => {
-  res.json({
-    success: true,
-    message: "SyncSpace API Working"
-  });
-});
-
-io.on("connection", (socket) => {
-
-  console.log("🟢 Socket connected:", socket.id);
-
-  socket.on("join-room", ({ roomId, username, userName }) => {
-
-    const finalUsername = username || userName;
-
-    if (!roomId || !finalUsername) {
-      console.log("❌ Room ID or username missing");
-      return;
-    }
-
+  // Room Join
+  socket.on('join-room', (roomId) => {
     socket.join(roomId);
+    console.log(`Socket ${socket.id} joined room: ${roomId}`);
+    socket.to(roomId).emit('user-joined', { socketId: socket.id });
+  });
 
-    socket.data.roomId = roomId;
-    socket.data.username = finalUsername;
+  // Real-Time Canvas Drawing Broadcasting (Lines, Shapes, Eraser, Clear)
+  socket.on('canvas-draw', (data) => {
+    const room = data.room || 'demo-room';
+    socket.to(room).emit('canvas-draw', data);
+  });
 
-    console.log("================================");
-    console.log("👤 USER JOINED");
-    console.log("Name:", finalUsername);
-    console.log("Room:", roomId);
-    console.log("Socket:", socket.id);
-    console.log("================================");
-
-    socket.emit("room-joined", {
-      roomId,
-      username: finalUsername
+  // Real-Time Multi-User Cursor & Awareness Sync
+  socket.on('cursor-move', (data) => {
+    const room = data.room || 'demo-room';
+    socket.to(room).emit('cursor-move', {
+      socketId: socket.id,
+      x: data.x,
+      y: data.y,
+      user: data.user
     });
-
-    io.in(roomId).fetchSockets().then((sockets) => {
-
-      const users = sockets.map((s) => ({
-        id: s.id,
-        name: s.data.username
-      }));
-
-      io.in(roomId).emit("users-update", users);
-    });
-
-    const doc = getDocument(roomId);
-    const update = Y.encodeStateAsUpdate(doc);
-
-    socket.emit(
-      "yjs-sync",
-      uint8ToBase64(update)
-    );
   });
 
-  socket.on("yjs-update", ({ roomId, update }) => {
-
-    if (!roomId || !update) return;
-
-    try {
-
-      const doc = getDocument(roomId);
-      const binaryUpdate = base64ToUint8(update);
-
-      Y.applyUpdate(doc, binaryUpdate);
-
-      socket.to(roomId).emit(
-        "yjs-update",
-        update
-      );
-
-    } catch (error) {
-      console.error("❌ YJS update error:", error.message);
-    }
+  // Monaco Code Delta Sync
+  socket.on('code-change', (data) => {
+    const room = data.room || 'demo-room';
+    socket.to(room).emit('code-change', data);
   });
 
-  socket.on("awareness-update", ({ roomId, awareness }) => {
-
-    if (!roomId || !awareness) return;
-
-    socket.to(roomId).emit(
-      "awareness-update",
-      {
-        id: socket.id,
-        ...awareness
-      }
-    );
-  });
-
-  socket.on("disconnect", async () => {
-
-    const roomId = socket.data.roomId;
-
-    console.log("🔴 Socket disconnected:", socket.id);
-
-    if (!roomId) return;
-
-    socket.to(roomId).emit(
-      "awareness-remove",
-      socket.id
-    );
-
-    try {
-
-      const sockets = await io.in(roomId).fetchSockets();
-
-      const users = sockets.map((s) => ({
-        id: s.id,
-        name: s.data.username
-      }));
-
-      io.in(roomId).emit("users-update", users);
-
-    } catch (error) {
-      console.error("Users update error:", error.message);
-    }
+  socket.on('disconnect', () => {
+    console.log(`[Socket Disconnected]: ${socket.id}`);
   });
 });
 
-async function connectMongoDB() {
-
-  if (!process.env.MONGO_URI) {
-    console.log("⚠️ MONGO_URI not found");
-    console.log("Running without MongoDB");
-    return;
-  }
-
-  try {
-
-    await mongoose.connect(process.env.MONGO_URI);
-
-    console.log("✅ MongoDB connected");
-
-  } catch (error) {
-
-    console.log(
-      "❌ MongoDB connection failed:",
-      error.message
-    );
-  }
-}
-
-async function startServer() {
-
-  await connectMongoDB();
-
-  server.listen(PORT, () => {
-
-    console.log("====================================");
-    console.log("🚀 SyncSpace Server Running");
-    console.log("====================================");
-    console.log(`🌐 http://localhost:${PORT}`);
-    console.log("====================================");
-
-  });
-}
-
-startServer();
-
-function uint8ToBase64(bytes) {
-
-  let binary = "";
-  const chunkSize = 0x8000;
-
-  for (
-    let i = 0;
-    i < bytes.length;
-    i += chunkSize
-  ) {
-
-    binary += String.fromCharCode(
-      ...bytes.subarray(i, i + chunkSize)
-    );
-  }
-
-  return Buffer
-    .from(binary, "binary")
-    .toString("base64");
-}
-
-function base64ToUint8(base64) {
-
-  return new Uint8Array(
-    Buffer.from(base64, "base64")
-  );
-}
+const PORT = process.env.PORT || 5000;
+server.listen(PORT, () => {
+  console.log(`SyncSpace Socket & API Server running on port ${PORT}`);
+});
