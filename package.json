@@ -1,4 +1,5 @@
 {
+<<<<<<< HEAD
   "name": "syncspace-server",
   "version": "1.0.0",
   "description": "SyncSpace database and Yjs persistence backend",
@@ -16,5 +17,11 @@
   },
   "devDependencies": {
     "nodemon": "^3.1.14"
+=======
+  "dependencies": {
+    "konva": "^10.5.0",
+    "react-konva": "^19.2.7",
+    "yjs": "^13.6.32"
+>>>>>>> origin/member6-database
   }
 }
