@@ -1,11 +1,11 @@
 import React, { useRef, useState, useEffect } from 'react';
 import socket from '../socket';
 
-const currentUserId = 'User #' + Math.random().toString(36).substring(2, 6).toUpperCase();
+const generatedId = 'User #' + Math.random().toString(36).substring(2, 6).toUpperCase();
 const userColors = ['#f43f5e', '#8b5cf6', '#06b6d4', '#10b981', '#f59e0b'];
 const myCursorColor = userColors[Math.floor(Math.random() * userColors.length)];
 
-const CanvasBoard = ({ replayFrame }) => {
+const CanvasBoard = ({ replayFrame, currentUser }) => {
   const canvasRef = useRef(null);
   const [tool, setTool] = useState('pen');
   const [strokeColor, setStrokeColor] = useState('#2563eb');
@@ -107,7 +107,9 @@ const CanvasBoard = ({ replayFrame }) => {
 
   const handlePointerMove = (e) => {
     const { x, y } = getCoords(e);
-    socket.emit('cursor-move', { room: 'demo-room', x, y, user: currentUserId, color: myCursorColor });
+    // Real authenticated user name will be broadcasted to peers
+    const activeName = currentUser || generatedId;
+    socket.emit('cursor-move', { room: 'demo-room', x, y, user: activeName, color: myCursorColor });
 
     if (!isDrawing) return;
     const canvas = canvasRef.current;

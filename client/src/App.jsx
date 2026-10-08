@@ -8,8 +8,12 @@ function App() {
   const [replayFrame, setReplayFrame] = useState(0);
   const [peerCount, setPeerCount] = useState(1);
   const [user, setUser] = useState(() => {
-    const saved = localStorage.getItem('sync_user');
-    return saved ? JSON.parse(saved) : null;
+    try {
+      const saved = localStorage.getItem('sync_user');
+      return saved ? JSON.parse(saved) : null;
+    } catch {
+      return null;
+    }
   });
 
   const [showAuthModal, setShowAuthModal] = useState(false);
@@ -48,6 +52,7 @@ function App() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Authentication failed');
 
+      // Persist in LocalStorage
       localStorage.setItem('sync_token', data.token);
       localStorage.setItem('sync_user', JSON.stringify(data.user));
       setUser(data.user);
@@ -157,7 +162,7 @@ function App() {
 
       <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
         <div style={{ flex: 1, borderRight: '2px solid #1e293b', position: 'relative' }}>
-          <CanvasBoard replayFrame={replayFrame} />
+          <CanvasBoard replayFrame={replayFrame} currentUser={user?.name} />
         </div>
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
           <CodeEditor />
