@@ -499,7 +499,7 @@ function App() {
             flexDirection: 'column',
             height: '100%'
           }}>
-            <CodeEditor roomId={currentSpace.id} />
+            <CodeEditor roomId={currentSpace.id} currentUser={user} />
           </div>
         )}
       </div>

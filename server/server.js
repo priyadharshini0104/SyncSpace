@@ -212,6 +212,97 @@ app.delete('/api/spaces/:spaceId', (req, res) => {
   return res.json({ success: true, message: `Space "${cleanId}" was deleted successfully.` });
 });
 
+// --- ONLINE CODE COMPILER RUNNER (100% Free via Wandbox) ---
+const roomCodeFiles = new Map(); // roomId -> Array of file objects
+
+const getDefaultRoomFiles = (roomId) => [
+  {
+    id: 'file-1',
+    name: 'index.js',
+    language: 'javascript',
+    content: `// SyncSpace JavaScript Environment\nconsole.log("Welcome to SyncSpace VS Code Editor!");\n\nfunction calculate() {\n  const a = 15;\n  const b = 27;\n  console.log("Result:", a + b);\n}\n\ncalculate();`
+  },
+  {
+    id: 'file-2',
+    name: 'main.py',
+    language: 'python',
+    content: `# SyncSpace Python Environment\nprint("Welcome to SyncSpace Python!")\n\ndef fibonacci(n):\n    a, b = 0, 1\n    for _ in range(n):\n        yield a\n        a, b = b, a + b\n\nprint("First 8 Fibonacci numbers:", list(fibonacci(8)))`
+  },
+  {
+    id: 'file-3',
+    name: 'solution.cpp',
+    language: 'cpp',
+    content: `// SyncSpace C++ Environment\n#include <iostream>\n#include <vector>\n\nint main() {\n    std::cout << "Welcome to SyncSpace C++!" << std::endl;\n    std::vector<int> numbers = {1, 2, 3, 4, 5};\n    int sum = 0;\n    for (int n : numbers) sum += n;\n    std::cout << "Sum: " << sum << std::endl;\n    return 0;\n}`
+  }
+];
+
+app.post('/api/compile/run', async (req, res) => {
+  const { language, code, stdin = '' } = req.body;
+  if (!code || typeof code !== 'string') {
+    return res.status(400).json({ error: 'Code content is required.' });
+  }
+
+  const lang = (language || '').toLowerCase().trim();
+  let compilerName = 'cpython-3.12.7';
+  if (lang === 'python' || lang === 'py') {
+    compilerName = 'cpython-3.12.7';
+  } else if (lang === 'javascript' || lang === 'js' || lang === 'node') {
+    compilerName = 'nodejs-20.17.0';
+  } else if (lang === 'cpp' || lang === 'c++') {
+    compilerName = 'gcc-13.2.0';
+  } else if (lang === 'c') {
+    compilerName = 'gcc-13.2.0-c';
+  } else if (lang === 'java') {
+    compilerName = 'openjdk-jdk-21.0.3+9';
+  } else if (lang === 'rust' || lang === 'rs') {
+    compilerName = 'rust-1.81.0';
+  } else if (lang === 'go') {
+    compilerName = 'go-1.23.1';
+  }
+
+  try {
+    const startTime = Date.now();
+    const wandboxRes = await fetch('https://wandbox.org/api/compile.json', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        compiler: compilerName,
+        code: code,
+        stdin: stdin
+      })
+    });
+
+    const elapsed = ((Date.now() - startTime) / 1000).toFixed(2);
+    if (!wandboxRes.ok) {
+      return res.status(502).json({
+        success: false,
+        error: `Compiler engine error (HTTP ${wandboxRes.status})`,
+        elapsed: `${elapsed}s`
+      });
+    }
+
+    const data = await wandboxRes.json();
+    const stdout = data.program_output || data.compiler_output || '';
+    const stderr = data.program_error || data.compiler_error || data.compiler_message || '';
+    const exitCode = data.status || '0';
+
+    return res.json({
+      success: true,
+      stdout,
+      stderr,
+      exitCode,
+      elapsed: `${elapsed}s`,
+      compiler: compilerName
+    });
+  } catch (err) {
+    console.error('Compilation runner error:', err);
+    return res.status(500).json({
+      success: false,
+      error: 'Failed to run code through compiler engine: ' + err.message
+    });
+  }
+});
+
 // --- WEBSOCKET SYNC & MULTI-USER AWARENESS ---
 io.on('connection', (socket) => {
   socket.on('join-room', (payload) => {
@@ -266,6 +357,11 @@ io.on('connection', (socket) => {
 
     if (!roomDrawHistory.has(targetRoom)) roomDrawHistory.set(targetRoom, []);
     socket.emit('initial-canvas-state', roomDrawHistory.get(targetRoom));
+
+    if (!roomCodeFiles.has(targetRoom)) {
+      roomCodeFiles.set(targetRoom, getDefaultRoomFiles(targetRoom));
+    }
+    socket.emit('initial-code-files', roomCodeFiles.get(targetRoom));
 
     broadcastRoomAwareness(targetRoom);
   });
@@ -333,6 +429,38 @@ io.on('connection', (socket) => {
   socket.on('code-change', (data) => {
     const room = (typeof data === 'object' && data.room) ? data.room : (socket.currentRoom || 'demo-room');
     socket.to(room).emit('code-change', data);
+  });
+
+  socket.on('get-code-files', (data) => {
+    const room = (typeof data === 'object' && data.room) ? data.room : (socket.currentRoom || 'demo-room');
+    if (!roomCodeFiles.has(room)) {
+      roomCodeFiles.set(room, getDefaultRoomFiles(room));
+    }
+    socket.emit('initial-code-files', roomCodeFiles.get(room));
+  });
+
+  socket.on('code-file-update', (data) => {
+    const room = data.room || socket.currentRoom || 'demo-room';
+    if (!roomCodeFiles.has(room)) roomCodeFiles.set(room, getDefaultRoomFiles(room));
+    const files = roomCodeFiles.get(room);
+    const idx = files.findIndex(f => f.id === data.fileId);
+    if (idx !== -1) {
+      files[idx].content = data.content;
+    }
+    socket.to(room).emit('code-file-update', data);
+  });
+
+  socket.on('code-files-change', (data) => {
+    const room = data.room || socket.currentRoom || 'demo-room';
+    if (Array.isArray(data.files)) {
+      roomCodeFiles.set(room, data.files);
+    }
+    socket.to(room).emit('code-files-change', data);
+  });
+
+  socket.on('code-run-event', (data) => {
+    const room = data.room || socket.currentRoom || 'demo-room';
+    socket.to(room).emit('code-run-event', data);
   });
 
   socket.on('disconnecting', () => {
