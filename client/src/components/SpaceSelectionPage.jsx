@@ -29,8 +29,9 @@ export default function SpaceSelectionPage({ user, onSelectSpace, onLogout }) {
   const [createError, setCreateError] = useState('');
   const [copiedId, setCopiedId] = useState(null);
 
-  const storageKey = 'syncspace_my_spaces_' + (user?.email || 'guest');
-  const joinedStorageKey = 'syncspace_joined_spaces_' + (user?.email || 'guest');
+  const userIdentifier = (user?.email || user?.name || 'guest').toLowerCase().trim();
+  const storageKey = 'syncspace_my_spaces_' + userIdentifier;
+  const joinedStorageKey = 'syncspace_joined_spaces_' + userIdentifier;
 
   // Automatic Migration: One-time purge of all custom spaces across all Gmail IDs
   try {
@@ -165,10 +166,11 @@ export default function SpaceSelectionPage({ user, onSelectSpace, onLogout }) {
     }
   };
 
+  const userQuery = (user?.email || user?.name || '').trim();
   // Strict server sync: do not resurrect deleted spaces from localStorage
   useEffect(() => {
-    if (user?.email) {
-      fetch(`http://localhost:5000/api/spaces/user/${encodeURIComponent(user.email)}`)
+    if (userQuery) {
+      fetch(`http://localhost:5000/api/spaces/user/${encodeURIComponent(userQuery)}`)
         .then((res) => res.json())
         .then((data) => {
           if (data.spaces && Array.isArray(data.spaces)) {
@@ -180,7 +182,7 @@ export default function SpaceSelectionPage({ user, onSelectSpace, onLogout }) {
         })
         .catch(() => {});
     }
-  }, [user?.email, storageKey]);
+  }, [userQuery, storageKey]);
 
   // Real-time listener: immediately clear local spaces when an admin/user wipes all spaces
   useEffect(() => {
@@ -518,6 +520,20 @@ export default function SpaceSelectionPage({ user, onSelectSpace, onLogout }) {
                         }}>
                           #{space.id}
                         </span>
+                        <span style={{
+                          backgroundColor: '#fef3c7',
+                          color: '#92400e',
+                          border: '1px solid #fde68a',
+                          padding: '2px 8px',
+                          borderRadius: '9999px',
+                          fontSize: '11px',
+                          fontWeight: '600',
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '4px'
+                        }}>
+                          👑 Created by You
+                        </span>
                         <span className="caption" style={{ color: '#9ca3af' }}>
                           {space.createdAt ? new Date(space.createdAt).toLocaleDateString() : 'Active Space'}
                         </span>
@@ -546,7 +562,7 @@ export default function SpaceSelectionPage({ user, onSelectSpace, onLogout }) {
 
                       <button
                         type="button"
-                        onClick={() => onSelectSpace({ id: space.id, name: space.name })}
+                        onClick={() => onSelectSpace({ id: space.id, name: space.name, createdBy: space.createdBy || userIdentifier })}
                         className="button-primary"
                         style={{
                           padding: '8px 16px',

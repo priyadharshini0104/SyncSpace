@@ -3,13 +3,11 @@ import SignInPage from './components/SignInPage';
 import SpaceSelectionPage from './components/SpaceSelectionPage';
 import CanvasBoard from './components/CanvasBoard';
 import CodeEditor from './components/CodeEditor';
-import SessionReplayBar from './components/SessionReplayBar';
 import CollaboratorsModal from './components/CollaboratorsModal';
 import { authService } from './utils/authService';
 import socket from './socket';
 
 function App() {
-  const [replayFrame, setReplayFrame] = useState(0);
   const [peerCount, setPeerCount] = useState(1);
   const [collaborators, setCollaborators] = useState([]);
   const [showCollaboratorsModal, setShowCollaboratorsModal] = useState(false);
@@ -194,6 +192,13 @@ function App() {
 
   const collaboratorCount = collaborators.length > 0 ? collaborators.length : peerCount;
 
+  const userIdentifier = (user?.email || user?.name || '').toLowerCase().trim();
+  const isSpaceCreator = currentSpace?.createdBy && (
+    currentSpace.createdBy.toLowerCase().trim() === userIdentifier ||
+    currentSpace.createdBy.toLowerCase().includes(userIdentifier) ||
+    userIdentifier.includes(currentSpace.createdBy.toLowerCase().trim())
+  );
+
   // --- VIEW 3: LIVE COLLABORATIVE SPACE WORKSPACE (DESIGN.md COMPLIANT) ---
   return (
     <div style={{
@@ -250,8 +255,24 @@ function App() {
               S
             </div>
             <div>
-              <div style={{ fontSize: '15px', fontWeight: '700', color: '#000000', display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <div style={{ fontSize: '15px', fontWeight: '700', color: '#000000', display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
                 <span>{currentSpace.name}</span>
+                {isSpaceCreator && (
+                  <span style={{
+                    backgroundColor: '#fef3c7',
+                    color: '#92400e',
+                    border: '1px solid #fde68a',
+                    padding: '2px 8px',
+                    borderRadius: '9999px',
+                    fontSize: '11px',
+                    fontWeight: '600',
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '4px'
+                  }}>
+                    👑 Space Creator
+                  </span>
+                )}
                 <span 
                   onClick={handleCopySpaceCode}
                   style={{
@@ -453,11 +474,6 @@ function App() {
         </div>
       </header>
 
-      {/* Session Replay Scrubber Container (Monochrome) */}
-      <div style={{ padding: '4px 20px', backgroundColor: '#fcfcfc', borderBottom: '1px solid #e5e7eb' }}>
-        <SessionReplayBar totalSnapshots={50} onSeek={(frame) => setReplayFrame(frame)} />
-      </div>
-
       {/* Dual Pane / Responsive Collaborative Workspace */}
       <div style={{ display: 'flex', flex: 1, overflow: 'hidden', backgroundColor: '#ffffff' }}>
         {/* Whiteboard Canvas Pane */}
@@ -471,7 +487,6 @@ function App() {
             <CanvasBoard
               roomId={currentSpace.id}
               currentUser={user}
-              replayFrame={replayFrame}
             />
           </div>
         )}
