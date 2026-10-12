@@ -1,4 +1,9 @@
 {
+  "scripts": {
+    "dev:server": "npm --prefix server run dev",
+    "dev:client": "npm --prefix client run dev",
+    "test:server": "npm --prefix server test"
+  },
   "dependencies": {
     "konva": "^10.5.0",
     "react-konva": "^19.2.7",

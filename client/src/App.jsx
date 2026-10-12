@@ -1,1650 +1,356 @@
-
-import React, {
-  useEffect,
-  useMemo,
-  useRef,
-  useState
-} from "react";
-
-import { io } from "socket.io-client";
-
-import * as Y from "yjs";
-
-import Editor from "@monaco-editor/react";
-
-import {
-  Circle,
-  Layer,
-  Line,
-  Rect,
-  Stage,
-  Text
-} from "react-konva";
-
-
-const SOCKET_URL =
-  "http://localhost:5000";
-
-const BOARD_WIDTH = 800;
-const BOARD_HEIGHT = 600;
-
-
-function createId() {
-  return (
-    Date.now() +
-    "-" +
-    Math.random()
-      .toString(36)
-      .substring(2, 9)
-  );
-}
-
-
-function randomName() {
-  return (
-    "User-" +
-    Math.floor(
-      1000 +
-      Math.random() * 9000
-    )
-  );
-}
-
+import React, { useState, useEffect } from 'react';
+import SignInPage from './components/SignInPage';
+import SpaceSelectionPage from './components/SpaceSelectionPage';
+import CanvasBoard from './components/CanvasBoard';
+import CodeEditor from './components/CodeEditor';
+import SessionReplayBar from './components/SessionReplayBar';
+import { authService } from './utils/authService';
+import socket from './socket';
 
 function App() {
+  const [replayFrame, setReplayFrame] = useState(0);
+  const [peerCount, setPeerCount] = useState(1);
+  const [user, setUser] = useState(() => authService.getUser());
+  const [currentSpace, setCurrentSpace] = useState(null); // { id: string, name: string } | null
+  const [copiedNotification, setCopiedNotification] = useState(false);
 
-  /* SOCKET */
-
-  const socket = useMemo(
-  () =>
-    io(SOCKET_URL, {
-      autoConnect: false
-    }),
-  []
-);
-
-
-  /* YJS DOCUMENT */
-
-  const ydoc = useMemo(
-    () => new Y.Doc(),
-    []
-  );
-
-
-  /* YJS SHAPES MAP */
-
-  const shapesMap = useMemo(
-    () =>
-      ydoc.getMap("shapes"),
-    [ydoc]
-  );
-  const codeMap = useMemo(
-  () =>
-    ydoc.getMap("code"),
-  [ydoc]
-);
-
-
-  /* STATES */
-
-  const [connected, setConnected] =
-    useState(false);
-
-  const [joined, setJoined] =
-    useState(false);
-
-  const [name, setName] =
-    useState(randomName());
-
-  const [roomId, setRoomId] =
-    useState("demo-room");
-
-  const [users, setUsers] =
-    useState([]);
-
-  const [shapes, setShapes] =
-    useState([]);
-
-  const [tool, setTool] =
-    useState("pen");
-
-  const [remoteCursors, setRemoteCursors] =
-    useState({});
-
-
-  const [code, setCode] =
-    useState(
-`function hello() {
-  console.log("Hello SyncSpace");
-}`
-    );
-
-
-  /* DRAWING REFERENCES */
-
-  const isDrawing =
-    useRef(false);
-
-  const currentShapeId =
-    useRef(null);
-
-
-  /* CURSOR TIMER */
-
-  const cursorTimer =
-    useRef(null);
-
-
-  /* SOCKET CONNECTION */
-
+  // Revalidate session on app mount
   useEffect(() => {
+    authService.getMe().then((verifiedUser) => {
+      setUser(verifiedUser || null);
+    });
+  }, []);
 
-  function handleConnect() {
-    console.log(
-      "Socket connected:",
-      socket.id
-    );
+  // Room presence, deletion listener & auto-sync for current space
+  useEffect(() => {
+    if (!currentSpace) return;
 
-    setConnected(true);
-  }
+    socket.emit('join-room', currentSpace.id);
 
-  function handleDisconnect() {
-    console.log("Socket disconnected");
+    const onRoomUsers = (count) => {
+      setPeerCount(count);
+    };
 
-    setConnected(false);
-  }
+    const onSpaceDeleted = (data) => {
+      if (currentSpace && data.spaceId === currentSpace.id) {
+        alert(`Notice: Space "${currentSpace.name || currentSpace.id}" was deleted.`);
+        handleLeaveSpace();
+      }
+    };
 
-  socket.on(
-    "connect",
-    handleConnect
-  );
+    socket.on('room-users', onRoomUsers);
+    socket.on('space-deleted', onSpaceDeleted);
 
-  socket.on(
-    "disconnect",
-    handleDisconnect
-  );
+    // Save to joinedSpaces in localStorage if user didn't create it
+    if (user?.email) {
+      try {
+        const mySpacesKey = `syncspace_my_spaces_${user.email}`;
+        const mySpaces = JSON.parse(localStorage.getItem(mySpacesKey) || '[]');
+        const isMine = mySpaces.some(s => s.id.toLowerCase() === currentSpace.id.toLowerCase());
+        if (!isMine) {
+          const joinedKey = `syncspace_joined_spaces_${user.email}`;
+          const joined = JSON.parse(localStorage.getItem(joinedKey) || '[]');
+          const updated = [
+            {
+              id: currentSpace.id,
+              name: currentSpace.name || currentSpace.id,
+              joinedAt: new Date().toISOString()
+            },
+            ...joined.filter(s => s.id.toLowerCase() !== currentSpace.id.toLowerCase())
+          ];
+          localStorage.setItem(joinedKey, JSON.stringify(updated));
+        }
+      } catch {}
+    }
 
-  socket.connect();
+    return () => {
+      socket.off('room-users', onRoomUsers);
+      socket.off('space-deleted', onSpaceDeleted);
+    };
+  }, [currentSpace, user]);
 
-  return () => {
-
-    socket.off(
-      "connect",
-      handleConnect
-    );
-
-    socket.off(
-      "disconnect",
-      handleDisconnect
-    );
-
-    socket.disconnect();
-
+  const handleAuthSuccess = (authenticatedUser) => {
+    setUser(authenticatedUser);
   };
 
-}, [socket]);
-
-  /* JOIN ROOM */
-
-  useEffect(() => {
-
-    socket.on(
-      "room-joined",
-      () => {
-
-        setJoined(true);
-
-      }
-    );
-
-
-    socket.on(
-      "users-update",
-      (userList) => {
-
-        setUsers(
-          userList || []
-        );
-
-      }
-    );
-
-
-    return () => {
-
-      socket.off(
-        "room-joined"
-      );
-
-      socket.off(
-        "users-update"
-      );
-
-    };
-
-  }, [socket]);
-
-
-  /* YJS → REACT */
-
-  useEffect(() => {
-
-    function updateShapes() {
-
-      const list = [];
-
-
-      shapesMap.forEach(
-        (value) => {
-
-          try {
-
-            list.push(
-              JSON.parse(value)
-            );
-
-          } catch {
-
-            console.log(
-              "Invalid shape"
-            );
-
-          }
-
-        }
-      );
-
-
-      list.sort(
-        (a, b) =>
-          a.createdAt -
-          b.createdAt
-      );
-
-
-      setShapes(list);
-
-    }
-
-
-    updateShapes();
-
-
-    shapesMap.observe(
-      updateShapes
-    );
-
-
-    return () => {
-
-      shapesMap.unobserve(
-        updateShapes
-      );
-
-    };
-
-  }, [shapesMap]);
-  /* YJS CODE → REACT */
-
-useEffect(() => {
-
-  function updateCode() {
-
-    const savedCode =
-      codeMap.get("content");
-
-    if (typeof savedCode === "string") {
-      setCode(savedCode);
-    }
-
-  }
-
-  updateCode();
-
-  codeMap.observe(
-    updateCode
-  );
-
-  return () => {
-
-    codeMap.unobserve(
-      updateCode
-    );
-
+  const handleLogout = () => {
+    authService.clearSession();
+    setUser(null);
+    setCurrentSpace(null);
   };
 
-}, [codeMap]);
+  const handleSelectSpace = (space) => {
+    setCurrentSpace(space);
+  };
 
+  const handleLeaveSpace = () => {
+    if (currentSpace) {
+      socket.emit('leave-room', currentSpace.id);
+    }
+    setCurrentSpace(null);
+  };
 
-  /* SEND LOCAL YJS UPDATE */
+  const handleCopySpaceCode = () => {
+    if (currentSpace?.id) {
+      navigator.clipboard.writeText(currentSpace.id);
+      setCopiedNotification(true);
+      setTimeout(() => setCopiedNotification(false), 2000);
+    }
+  };
 
-  useEffect(() => {
+  const handleDeleteCurrentSpace = async () => {
+    if (!currentSpace || currentSpace.id === 'demo-room') {
+      alert('The default demo-room space cannot be deleted.');
+      return;
+    }
+    const confirmed = window.confirm(`Are you sure you want to delete space "${currentSpace.name || currentSpace.id}"? All collaborators will be disconnected and this space will be deleted.`);
+    if (!confirmed) return;
 
-    function sendUpdate(
-      update,
-      origin
-    ) {
-
-      if (
-        origin === "remote"
-      ) {
-
+    try {
+      const res = await fetch(`http://localhost:5000/api/spaces/${encodeURIComponent(currentSpace.id)}`, {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userEmail: user?.email || '' })
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        alert(data.error || 'Failed to delete space.');
         return;
-
       }
 
-
-      if (!joined) {
-
-        return;
-
+      // Clean up localStorage
+      if (user?.email) {
+        const mySpacesKey = `syncspace_my_spaces_${user.email}`;
+        const joinedKey = `syncspace_joined_spaces_${user.email}`;
+        try {
+          const mySpaces = JSON.parse(localStorage.getItem(mySpacesKey) || '[]');
+          localStorage.setItem(mySpacesKey, JSON.stringify(mySpaces.filter(s => s.id !== currentSpace.id)));
+          const joined = JSON.parse(localStorage.getItem(joinedKey) || '[]');
+          localStorage.setItem(joinedKey, JSON.stringify(joined.filter(s => s.id !== currentSpace.id)));
+        } catch {}
       }
 
-
-      socket.emit(
-        "yjs-update",
-        {
-
-          roomId,
-
-          update:
-            uint8ToBase64(
-              update
-            )
-
-        }
-      );
-
+      handleLeaveSpace();
+    } catch (err) {
+      alert('Could not connect to server to delete space.');
     }
+  };
 
 
-    ydoc.on(
-      "update",
-      sendUpdate
-    );
-
-
-    return () => {
-
-      ydoc.off(
-        "update",
-        sendUpdate
-      );
-
-    };
-
-  }, [
-    ydoc,
-    socket,
-    roomId,
-    joined
-  ]);
-
-
-  /* RECEIVE YJS UPDATE */
-
-  useEffect(() => {
-
-    function receiveSync(
-      update
-    ) {
-
-      Y.applyUpdate(
-        ydoc,
-        base64ToUint8(update),
-        "remote"
-      );
-
-    }
-
-
-    socket.on(
-      "yjs-sync",
-      receiveSync
-    );
-
-
-    socket.on(
-      "yjs-update",
-      receiveSync
-    );
-
-
-    return () => {
-
-      socket.off(
-        "yjs-sync",
-        receiveSync
-      );
-
-      socket.off(
-        "yjs-update",
-        receiveSync
-      );
-
-    };
-
-  }, [
-    socket,
-    ydoc
-  ]);
-
-
-  /* CURSOR AWARENESS */
-
-  useEffect(() => {
-
-    function receiveCursor(
-      data
-    ) {
-
-      if (!data?.id) {
-
-        return;
-
-      }
-
-
-      setRemoteCursors(
-        (previous) => ({
-
-          ...previous,
-
-          [data.id]:
-            data
-
-        })
-      );
-
-    }
-
-
-    function removeCursor(
-      id
-    ) {
-
-      setRemoteCursors(
-        (previous) => {
-
-          const next = {
-            ...previous
-          };
-
-
-          delete next[id];
-
-
-          return next;
-
-        }
-      );
-
-    }
-
-
-    socket.on(
-      "awareness-update",
-      receiveCursor
-    );
-
-
-    socket.on(
-      "awareness-remove",
-      removeCursor
-    );
-
-
-    return () => {
-
-      socket.off(
-        "awareness-update",
-        receiveCursor
-      );
-
-      socket.off(
-        "awareness-remove",
-        removeCursor
-      );
-
-    };
-
-  }, [socket]);
-
-
-  /* JOIN ROOM FUNCTION */
-
-  function joinRoom() {
-
-    if (
-      !name.trim()
-    ) {
-
-      alert(
-        "Please enter your name"
-      );
-
-      return;
-
-    }
-
-
-    if (
-      !roomId.trim()
-    ) {
-
-      alert(
-        "Please enter Room ID"
-      );
-
-      return;
-
-    }
-
-
-    socket.emit(
-      "join-room",
-      {
-
-        roomId:
-          roomId.trim(),
-
-        username:
-          name.trim()
-
-      }
-    );
-
+  // --- VIEW 1: SEPARATE SIGN-IN PAGE ---
+  if (!user) {
+    return <SignInPage onAuthSuccess={handleAuthSuccess} />;
   }
 
-
-  /* UPDATE SHAPE */
-
-  function updateShape(
-    shape
-  ) {
-
-    shapesMap.set(
-      shape.id,
-      JSON.stringify(shape)
-    );
-
-  }
-
-
-  /* POINTER DOWN */
-
-  function handlePointerDown(
-    event
-  ) {
-
-    if (!joined) {
-
-      return;
-
-    }
-
-
-    const stage =
-      event.target.getStage();
-
-
-    const point =
-      stage.getPointerPosition();
-
-
-    if (!point) {
-
-      return;
-
-    }
-
-
-    /* PEN */
-
-    if (
-      tool === "pen"
-    ) {
-
-      const shape = {
-
-        id:
-          createId(),
-
-        type:
-          "line",
-
-        points: [
-          point.x,
-          point.y
-        ],
-
-        stroke:
-          "#111827",
-
-        strokeWidth:
-          3,
-
-        createdAt:
-          Date.now()
-
-      };
-
-
-      isDrawing.current =
-        true;
-
-
-      currentShapeId.current =
-        shape.id;
-
-
-      updateShape(
-        shape
-      );
-
-    }
-
-
-    /* RECTANGLE */
-
-    if (
-      tool === "rectangle"
-    ) {
-
-      const shape = {
-
-        id:
-          createId(),
-
-        type:
-          "rectangle",
-
-        x:
-          point.x,
-
-        y:
-          point.y,
-
-        width:
-          0,
-
-        height:
-          0,
-
-        stroke:
-          "#2563eb",
-
-        strokeWidth:
-          3,
-
-        createdAt:
-          Date.now()
-
-      };
-
-
-      isDrawing.current =
-        true;
-
-
-      currentShapeId.current =
-        shape.id;
-
-
-      updateShape(
-        shape
-      );
-
-    }
-
-
-    /* TEXT */
-
-    if (
-      tool === "text"
-    ) {
-
-      const text =
-        window.prompt(
-          "Enter text:"
-        );
-
-
-      if (!text) {
-
-        return;
-
-      }
-
-
-      const shape = {
-
-        id:
-          createId(),
-
-        type:
-          "text",
-
-        x:
-          point.x,
-
-        y:
-          point.y,
-
-        text:
-          text,
-
-        fontSize:
-          22,
-
-        fill:
-          "#111827",
-
-        createdAt:
-          Date.now()
-
-      };
-
-
-      updateShape(
-        shape
-      );
-
-    }
-
-  }
-
-
-  /* POINTER MOVE */
-
-  function handlePointerMove(
-    event
-  ) {
-
-    const stage =
-      event.target.getStage();
-
-
-    const point =
-      stage.getPointerPosition();
-
-
-    if (!point) {
-
-      return;
-
-    }
-    if (tool === "eraser") {
-  const clickedShape = shapes.find((shape) => {
-
-    if (shape.type === "line") {
-      for (let i = 0; i < shape.points.length; i += 2) {
-        const dx = shape.points[i] - point.x;
-        const dy = shape.points[i + 1] - point.y;
-
-        if (Math.sqrt(dx * dx + dy * dy) < 15) {
-          return true;
-        }
-      }
-    }
-
-    if (shape.type === "rectangle") {
-      return (
-        point.x >= Math.min(shape.x, shape.x + shape.width) &&
-        point.x <= Math.max(shape.x, shape.x + shape.width) &&
-        point.y >= Math.min(shape.y, shape.y + shape.height) &&
-        point.y <= Math.max(shape.y, shape.y + shape.height)
-      );
-    }
-
-    if (shape.type === "text") {
-      return (
-        point.x >= shape.x &&
-        point.x <= shape.x + 150 &&
-        point.y >= shape.y &&
-        point.y <= shape.y + 30
-      );
-    }
-
-    return false;
-  });
-
-  if (clickedShape) {
-    shapesMap.delete(clickedShape.id);
-  }
-
-  return;
-}
-
-
-    /* SEND CURSOR */
-
-    clearTimeout(
-      cursorTimer.current
-    );
-
-
-    cursorTimer.current =
-      setTimeout(() => {
-
-        if (!joined) {
-
-          return;
-
-        }
-
-
-        socket.emit(
-          "awareness-update",
-          {
-
-            roomId,
-
-            awareness: {
-
-              name,
-
-              x:
-                point.x,
-
-              y:
-                point.y
-
-            }
-
-          }
-        );
-
-      }, 20);
-
-
-    /* DRAWING */
-
-    if (
-      !isDrawing.current
-    ) {
-
-      return;
-
-    }
-
-
-    const id =
-      currentShapeId.current;
-
-
-    if (!id) {
-
-      return;
-
-    }
-
-
-    const raw =
-      shapesMap.get(id);
-
-
-    if (!raw) {
-
-      return;
-
-    }
-
-
-    const shape =
-      JSON.parse(raw);
-
-
-    /* LINE */
-
-    if (
-      shape.type === "line"
-    ) {
-
-      shape.points.push(
-        point.x,
-        point.y
-      );
-
-
-      updateShape(
-        shape
-      );
-
-    }
-
-
-    /* RECTANGLE */
-
-    if (
-      shape.type === "rectangle"
-    ) {
-
-      shape.width =
-        point.x -
-        shape.x;
-
-
-      shape.height =
-        point.y -
-        shape.y;
-
-
-      updateShape(
-        shape
-      );
-
-    }
-
-  }
-
-
-  /* POINTER UP */
-
-  function handlePointerUp() {
-
-    isDrawing.current =
-      false;
-
-    currentShapeId.current =
-      null;
-
-  }
-
-
-  /* RENDER SHAPE */
-
-  function renderShape(
-    shape
-  ) {
-
-    /* LINE */
-
-    if (
-      shape.type === "line"
-    ) {
-
-      return (
-
-        <Line
-
-          key={
-            shape.id
-          }
-
-          points={
-            shape.points
-          }
-
-          stroke={
-            shape.stroke
-          }
-
-          strokeWidth={
-            shape.strokeWidth
-          }
-
-          lineCap="round"
-
-          lineJoin="round"
-
-        />
-
-      );
-
-    }
-
-
-    /* RECTANGLE */
-
-    if (
-      shape.type === "rectangle"
-    ) {
-
-      return (
-
-        <Rect
-
-          key={
-            shape.id
-          }
-
-          x={
-            shape.width < 0
-              ? shape.x +
-                shape.width
-              : shape.x
-          }
-
-          y={
-            shape.height < 0
-              ? shape.y +
-                shape.height
-              : shape.y
-          }
-
-          width={
-            Math.abs(
-              shape.width
-            )
-          }
-
-          height={
-            Math.abs(
-              shape.height
-            )
-          }
-
-          stroke={
-            shape.stroke
-          }
-
-          strokeWidth={
-            shape.strokeWidth
-          }
-
-        />
-
-      );
-
-    }
-
-
-    /* TEXT */
-
-    if (
-      shape.type === "text"
-    ) {
-
-      return (
-
-        <Text
-
-          key={
-            shape.id
-          }
-
-          x={
-            shape.x
-          }
-
-          y={
-            shape.y
-          }
-
-          text={
-            shape.text
-          }
-
-          fontSize={
-            shape.fontSize
-          }
-
-          fill={
-            shape.fill
-          }
-
-        />
-
-      );
-
-    }
-
-
-    return null;
-
-  }
-
-
-  /* JOIN PAGE */
-
-  if (!joined) {
-
+  // --- VIEW 2: JOIN OR CREATE A SPACE PAGE ---
+  if (!currentSpace) {
     return (
+      <SpaceSelectionPage
+        user={user}
+        onSelectSpace={handleSelectSpace}
+        onLogout={handleLogout}
+      />
+    );
+  }
 
-      <div className="join-page">
+  // --- VIEW 3: LIVE COLLABORATIVE SPACE WORKSPACE ---
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', background: '#0f172a', color: '#fff', fontFamily: 'Inter, system-ui, sans-serif' }}>
+      {/* SyncSpace Monochrome Top Chrome */}
+      <header style={{
+        display: 'flex',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        padding: '8px 24px',
+        borderBottom: '1px solid #1e293b',
+        background: '#0b0f19',
+        boxShadow: '0 2px 8px rgba(0,0,0,0.4)',
+        zIndex: 10
+      }}>
+        {/* Left: Brand + Back to Spaces Pill */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+          <button
+            onClick={handleLeaveSpace}
+            className="button-secondary"
+            style={{
+              padding: '6px 16px',
+              fontSize: '13px',
+              borderRadius: '9999px',
+              background: '#1e293b',
+              color: '#ffffff',
+              border: '1px solid #334155',
+              cursor: 'pointer'
+            }}
+            title="Leave this space and choose or create another"
+          >
+            &larr; All Spaces
+          </button>
 
-        <div className="join-card">
+          <div style={{ height: '20px', width: '1px', backgroundColor: '#334155' }} />
 
-          <h1>
-            SyncSpace
-          </h1>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <div style={{
+              width: '24px',
+              height: '24px',
+              borderRadius: '9999px',
+              background: '#000000',
+              border: '1px solid #334155',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              fontWeight: 'bold',
+              fontSize: '12px'
+            }}>
+              S
+            </div>
+            <div>
+              <div style={{ fontSize: '14px', fontWeight: '700', color: '#f8fafc', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <span>{currentSpace.name}</span>
+                <span 
+                  onClick={handleCopySpaceCode}
+                  style={{
+                    fontFamily: 'JetBrains Mono, monospace',
+                    fontSize: '11px',
+                    backgroundColor: '#1e293b',
+                    color: '#94a3b8',
+                    padding: '2px 8px',
+                    borderRadius: '9999px',
+                    cursor: 'pointer',
+                    border: '1px solid #334155'
+                  }}
+                  title="Click to copy space ID"
+                >
+                  #{currentSpace.id} {copiedNotification ? '✓ Copied' : '📋'}
+                </span>
+                {currentSpace.id !== 'demo-room' && (
+                  <button
+                    onClick={handleDeleteCurrentSpace}
+                    style={{
+                      background: 'rgba(239, 68, 68, 0.15)',
+                      color: '#f87171',
+                      border: '1px solid rgba(239, 68, 68, 0.35)',
+                      padding: '2px 10px',
+                      borderRadius: '9999px',
+                      cursor: 'pointer',
+                      fontSize: '11px',
+                      fontWeight: '600',
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '4px',
+                      marginLeft: '6px'
+                    }}
+                    title="Permanently delete this space"
+                  >
+                    🗑 Delete Space
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+        
+        {/* Right: Peer Count & User Info */}
+        <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
+          <span style={{
+            background: 'rgba(5, 150, 105, 0.2)',
+            color: '#34d399',
+            border: '1px solid rgba(5, 150, 105, 0.4)',
+            padding: '3px 12px',
+            borderRadius: '9999px',
+            fontSize: '11px',
+            fontWeight: '600',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '6px'
+          }}>
+            <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: '#10b981', display: 'inline-block' }}></span>
+            CRDT Active
+          </span>
 
+          <span style={{ fontSize: '12px', color: '#94a3b8', background: '#1e293b', padding: '3px 12px', borderRadius: '9999px' }}>
+            {peerCount} {peerCount === 1 ? 'collaborator' : 'collaborators'}
+          </span>
 
-          <p>
-            Real-Time Collaborative
-            Whiteboard & Code Editor
-          </p>
+          {/* User Profile Pill */}
+          <div style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: '8px',
+            background: '#1e293b',
+            padding: '4px 10px 4px 6px',
+            borderRadius: '9999px',
+            border: '1px solid #334155'
+          }}>
+            <img
+              src={user.avatar || `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(user.name)}`}
+              alt=""
+              style={{
+                width: '22px',
+                height: '22px',
+                borderRadius: '50%',
+                objectFit: 'cover'
+              }}
+              onError={(e) => {
+                e.target.src = `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(user.name)}`;
+              }}
+            />
+            <span style={{ fontSize: '12px', fontWeight: '600', color: '#f8fafc' }}>
+              {user.name}
+            </span>
 
-
-          <label>
-            Your Name
-          </label>
-
-
-          <input
-
-            value={
-              name
-            }
-
-            onChange={
-              (event) =>
-                setName(
-                  event.target.value
-                )
-            }
-
-            placeholder="Enter your name"
-
-          />
-
-
-          <label>
-            Room ID
-          </label>
-
-
-          <input
-
-            value={
-              roomId
-            }
-
-            onChange={
-              (event) =>
-                setRoomId(
-                  event.target.value
-                )
-            }
-
-            placeholder="demo-room"
-
-          />
-
+            <span style={{
+              background: user.provider === 'google' || user.provider === 'both' ? 'rgba(66, 133, 244, 0.2)' : 'rgba(59, 130, 246, 0.2)',
+              color: user.provider === 'google' || user.provider === 'both' ? '#60a5fa' : '#93c5fd',
+              fontSize: '10px',
+              padding: '1px 6px',
+              borderRadius: '9999px',
+              fontWeight: '700'
+            }}>
+              {user.provider === 'google' || user.provider === 'both' ? 'Google' : 'JWT'}
+            </span>
+          </div>
 
           <button
-  type="button"
-  onClick={() => {
-    console.log("JOIN BUTTON CLICKED");
-    joinRoom();
-  }}
->
-  Join Room
-</button>
-
-          <p>
-
-            {connected
-              ? "🟢 Server Connected"
-              : "🔴 Connecting..."}
-
-          </p>
-
+            onClick={handleLogout}
+            style={{
+              background: 'rgba(239, 68, 68, 0.15)',
+              color: '#f87171',
+              border: '1px solid rgba(239, 68, 68, 0.3)',
+              padding: '5px 12px',
+              borderRadius: '9999px',
+              cursor: 'pointer',
+              fontSize: '12px',
+              fontWeight: '600'
+            }}
+          >
+            Sign Out
+          </button>
         </div>
-
-      </div>
-
-    );
-
-  }
-
-
-  /* MAIN APPLICATION */
-
-  return (
-
-    <div className="app">
-
-
-      {/* HEADER */}
-
-      <header className="header">
-
-        <div>
-
-          <h1>
-            SyncSpace
-          </h1>
-
-          <p>
-            Real-Time Collaborative
-            Workspace
-          </p>
-
-        </div>
-
-
-        <div className="room-info">
-
-          <span>
-            Room:
-          </span>
-
-          <strong>
-            {roomId}
-          </strong>
-
-          <span>
-            👥
-          </span>
-
-          <strong>
-            {users.length}
-          </strong>
-
-        </div>
-
       </header>
 
-
-      {/* WORKSPACE */}
-
-      <main className="workspace">
-
-
-        {/* WHITEBOARD */}
-
-        <section className="whiteboard">
-
-          <div className="panel-title">
-
-            <div>
-
-              <h2>
-                Whiteboard
-              </h2>
-
-              <span>
-                Konva + Yjs CRDT
-              </span>
-
-            </div>
-
-
-            <div className="toolbar">
-
-              <button
-
-                className={
-                  tool === "pen"
-                    ? "active"
-                    : ""
-                }
-
-                onClick={() =>
-                  setTool("pen")
-                }
-
-              >
-                ✏️ Pen
-              </button>
-
-
-              <button
-
-                className={
-                  tool === "rectangle"
-                    ? "active"
-                    : ""
-                }
-
-                onClick={() =>
-                  setTool(
-                    "rectangle"
-                  )
-                }
-
-              >
-                ▭ Rectangle
-              </button>
-
-
-              <button
-
-                className={
-                  tool === "text"
-                    ? "active"
-                    : ""
-                }
-
-                onClick={() =>
-                  setTool("text")
-                }
-
-              >
-                T Text
-              </button>
-              <button
-  className={
-    tool === "eraser"
-      ? "active"
-      : ""
-  }
-  onClick={() =>
-    setTool("eraser")
-  }
->
-  🧹 Eraser
-</button>
-
-            </div>
-
-          </div>
-
-
-          {/* CANVAS */}
-
-          <div className="canvas-area">
-
-            <Stage
-
-              width={
-                BOARD_WIDTH
-              }
-
-              height={
-                BOARD_HEIGHT
-              }
-
-              onMouseDown={
-                handlePointerDown
-              }
-
-              onMouseMove={
-                handlePointerMove
-              }
-
-              onMouseUp={
-                handlePointerUp
-              }
-
-              onMouseLeave={
-                handlePointerUp
-              }
-
-              onTouchStart={
-                handlePointerDown
-              }
-
-              onTouchMove={
-                handlePointerMove
-              }
-
-              onTouchEnd={
-                handlePointerUp
-              }
-
-            >
-
-              <Layer>
-
-                {/* BACKGROUND */}
-
-                <Rect
-
-                  x={0}
-
-                  y={0}
-
-                  width={
-                    BOARD_WIDTH
-                  }
-
-                  height={
-                    BOARD_HEIGHT
-                  }
-
-                  fill="white"
-
-                />
-
-
-                {/* SHAPES */}
-
-                {shapes.map(
-                  renderShape
-                )}
-
-
-                {/* REMOTE CURSORS */}
-
-                {Object.entries(
-                  remoteCursors
-                ).map(
-                  ([id, cursor]) => (
-
-                    <React.Fragment
-                      key={id}
-                    >
-
-                      <Circle
-
-                        x={
-                          cursor.x
-                        }
-
-                        y={
-                          cursor.y
-                        }
-
-                        radius={6}
-
-                        fill="red"
-
-                      />
-
-
-                      <Text
-
-                        x={
-                          cursor.x + 10
-                        }
-
-                        y={
-                          cursor.y - 10
-                        }
-
-                        text={
-                          cursor.name
-                        }
-
-                        fontSize={14}
-
-                        fill="red"
-
-                      />
-
-                    </React.Fragment>
-
-                  )
-                )}
-
-              </Layer>
-
-            </Stage>
-
-          </div>
-
-
-          <div className="hint">
-
-            Draw with Pen or Rectangle.
-            Use Text to add text.
-            Cursor/name is shared
-            with other users.
-
-          </div>
-
-        </section>
-
-
-        {/* CODE EDITOR */}
-
-        <section className="code-section">
-
-          <div className="panel-title">
-
-            <div>
-
-              <h2>
-                Code Editor
-              </h2>
-
-              <span>
-                Monaco Editor
-              </span>
-
-            </div>
-
-          </div>
-
-
-          <div className="editor">
-
-            <Editor
-
-              height="100%"
-
-              defaultLanguage="javascript"
-
-              theme="vs-dark"
-
-              value={
-                code
-              }
-
-              onChange={(value) => {
-  const newCode = value || "";
-
-  setCode(newCode);
-
-  if (joined) {
-    codeMap.set(
-      "content",
-      newCode
-    );
-  }
-}}
-
-              options={{
-
-                fontSize: 15,
-
-                minimap: {
-                  enabled: false
-                },
-
-                automaticLayout:
-                  true
-
-              }}
-
-            />
-
-          </div>
-
-        </section>
-
-
-      </main>
-
-
-      {/* FOOTER */}
-
-      <footer className="footer">
-
-        <span>
-
-          {connected
-            ? "🟢 Connected"
-            : "🔴 Disconnected"}
-
-        </span>
-
-
-        <span>
-
-          {users.length}
-          {" "}
-          user(s) in room
-
-        </span>
-
-      </footer>
-
+      {/* Session Replay Scrubber */}
+      <div style={{ padding: '0 16px', background: '#111827' }}>
+        <SessionReplayBar totalSnapshots={50} onSeek={(frame) => setReplayFrame(frame)} />
+      </div>
+
+      {/* Dual Pane Collaborative Workspace */}
+      <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
+        {/* Left: Whiteboard Canvas */}
+        <div style={{ flex: 1, borderRight: '2px solid #1e293b', position: 'relative' }}>
+          <CanvasBoard
+            roomId={currentSpace.id}
+            currentUser={user}
+            replayFrame={replayFrame}
+          />
+        </div>
+
+        {/* Right: Monaco / Real-Time Code Buffer */}
+        <div style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
+          <CodeEditor roomId={currentSpace.id} />
+        </div>
+      </div>
     </div>
-
   );
-
 }
-
-
-/* UINT8 → BASE64 */
-
-function uint8ToBase64(
-  bytes
-) {
-
-  let binary = "";
-
-  const chunk =
-    0x8000;
-
-
-  for (
-    let i = 0;
-    i < bytes.length;
-    i += chunk
-  ) {
-
-    binary += String.fromCharCode(
-      ...bytes.subarray(
-        i,
-        i + chunk
-      )
-    );
-
-  }
-
-
-  return btoa(binary);
-
-}
-
-
-/* BASE64 → UINT8 */
-
-function base64ToUint8(
-  base64
-) {
-
-  const binary =
-    atob(base64);
-
-
-  const bytes =
-    new Uint8Array(
-      binary.length
-    );
-
-
-  for (
-    let i = 0;
-    i < binary.length;
-    i++
-  ) {
-
-    bytes[i] =
-      binary.charCodeAt(i);
-
-  }
-
-
-  return bytes;
-
-}
-
 
 export default App;

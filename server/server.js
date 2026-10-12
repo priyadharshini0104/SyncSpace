@@ -1,226 +1,195 @@
-import cors from "cors";
-import "dotenv/config";
-import express from "express";
-import http from "http";
-import mongoose from "mongoose";
-import { Server } from "socket.io";
-import * as Y from "yjs";
+import express from 'express';
+import http from 'http';
+import { Server } from 'socket.io';
+import cors from 'cors';
+import dotenv from 'dotenv';
+import authRoutes from './routes/authRoutes.js';
+import { connectDB, userRepository } from './services/db.js';
+
+dotenv.config();
 
 const app = express();
 const server = http.createServer(app);
 
-const PORT = process.env.PORT || 5000;
-
-app.use(cors());
+app.use(cors({ origin: '*', methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'] }));
 app.use(express.json());
 
-const io = new Server(server, {
-  cors: {
-    origin: "*",
-    methods: ["GET", "POST"]
-  }
-});
+// Connect Database (MongoDB with resilient in-memory fallback)
+connectDB();
 
-const documents = new Map();
+// Mount Authentication APIs
+app.use('/api/auth', authRoutes);
 
-function getDocument(roomId) {
-  if (!documents.has(roomId)) {
-    documents.set(roomId, new Y.Doc());
-  }
-  return documents.get(roomId);
-}
+// Space Registry & In-Memory Canvas History per room
+const roomDrawHistory = new Map();
+const knownSpaces = new Set(['demo-room', 'architecture-lab', 'system-design']);
 
-app.get("/", (req, res) => {
+// System Health & Service Status
+app.get('/api/health', (req, res) => {
+  const dbStatus = userRepository.getStatus();
   res.json({
-    success: true,
-    message: "SyncSpace Server Running"
+    status: 'ok',
+    service: 'SyncSpace Server, JWT & Google Auth Active',
+    googleAuthEnabled: Boolean(process.env.GOOGLE_CLIENT_ID),
+    database: dbStatus.isMongoConnected ? 'MongoDB Atlas' : 'Resilient In-Memory Store'
   });
 });
 
-app.get("/api/health", (req, res) => {
-  res.json({
-    success: true,
-    message: "SyncSpace API Working"
-  });
-});
+// Space Registry
+const registeredSpaces = new Map([
+  ['demo-room', { id: 'demo-room', name: 'Demo Room', createdAt: new Date() }]
+]);
 
-io.on("connection", (socket) => {
-
-  console.log("🟢 Socket connected:", socket.id);
-
-  socket.on("join-room", ({ roomId, username, userName }) => {
-
-    const finalUsername = username || userName;
-
-    if (!roomId || !finalUsername) {
-      console.log("❌ Room ID or username missing");
-      return;
-    }
-
-    socket.join(roomId);
-
-    socket.data.roomId = roomId;
-    socket.data.username = finalUsername;
-
-    console.log("================================");
-    console.log("👤 USER JOINED");
-    console.log("Name:", finalUsername);
-    console.log("Room:", roomId);
-    console.log("Socket:", socket.id);
-    console.log("================================");
-
-    socket.emit("room-joined", {
-      roomId,
-      username: finalUsername
+// Verify if a space exists before joining
+app.get('/api/spaces/verify/:spaceId', (req, res) => {
+  const cleanId = (req.params.spaceId || '').trim().toLowerCase();
+  const space = registeredSpaces.get(cleanId);
+  if (!space) {
+    return res.status(200).json({
+      exists: false,
+      error: `Space "${cleanId}" has not been created yet.`
     });
-
-    io.in(roomId).fetchSockets().then((sockets) => {
-
-      const users = sockets.map((s) => ({
-        id: s.id,
-        name: s.data.username
-      }));
-
-      io.in(roomId).emit("users-update", users);
-    });
-
-    const doc = getDocument(roomId);
-    const update = Y.encodeStateAsUpdate(doc);
-
-    socket.emit(
-      "yjs-sync",
-      uint8ToBase64(update)
-    );
-  });
-
-  socket.on("yjs-update", ({ roomId, update }) => {
-
-    if (!roomId || !update) return;
-
-    try {
-
-      const doc = getDocument(roomId);
-      const binaryUpdate = base64ToUint8(update);
-
-      Y.applyUpdate(doc, binaryUpdate);
-
-      socket.to(roomId).emit(
-        "yjs-update",
-        update
-      );
-
-    } catch (error) {
-      console.error("❌ YJS update error:", error.message);
-    }
-  });
-
-  socket.on("awareness-update", ({ roomId, awareness }) => {
-
-    if (!roomId || !awareness) return;
-
-    socket.to(roomId).emit(
-      "awareness-update",
-      {
-        id: socket.id,
-        ...awareness
-      }
-    );
-  });
-
-  socket.on("disconnect", async () => {
-
-    const roomId = socket.data.roomId;
-
-    console.log("🔴 Socket disconnected:", socket.id);
-
-    if (!roomId) return;
-
-    socket.to(roomId).emit(
-      "awareness-remove",
-      socket.id
-    );
-
-    try {
-
-      const sockets = await io.in(roomId).fetchSockets();
-
-      const users = sockets.map((s) => ({
-        id: s.id,
-        name: s.data.username
-      }));
-
-      io.in(roomId).emit("users-update", users);
-
-    } catch (error) {
-      console.error("Users update error:", error.message);
-    }
-  });
+  }
+  return res.json({ success: true, exists: true, space });
 });
 
-async function connectMongoDB() {
-
-  if (!process.env.MONGO_URI) {
-    console.log("⚠️ MONGO_URI not found");
-    console.log("Running without MongoDB");
-    return;
+// Explicit Space Creation API
+app.post('/api/spaces/create', (req, res) => {
+  const { id, name, createdBy } = req.body;
+  if (!id || !id.trim()) {
+    return res.status(400).json({ error: 'Space ID is required.' });
   }
-
-  try {
-
-    await mongoose.connect(process.env.MONGO_URI);
-
-    console.log("✅ MongoDB connected");
-
-  } catch (error) {
-
-    console.log(
-      "❌ MongoDB connection failed:",
-      error.message
-    );
+  const cleanId = id.trim().toLowerCase().replace(/[^a-z0-9-_]/g, '-');
+  if (registeredSpaces.has(cleanId)) {
+    return res.status(409).json({
+      error: `Space "${cleanId}" already exists. Please choose another ID or join it.`
+    });
   }
-}
+  const newSpace = {
+    id: cleanId,
+    name: (name && name.trim()) || cleanId,
+    createdBy: (createdBy || 'Anonymous').trim(),
+    createdAt: new Date()
+  };
+  registeredSpaces.set(cleanId, newSpace);
+  return res.status(201).json({ success: true, space: newSpace });
+});
 
-async function startServer() {
-
-  await connectMongoDB();
-
-  server.listen(PORT, () => {
-
-    console.log("====================================");
-    console.log("🚀 SyncSpace Server Running");
-    console.log("====================================");
-    console.log(`🌐 http://localhost:${PORT}`);
-    console.log("====================================");
-
-  });
-}
-
-startServer();
-
-function uint8ToBase64(bytes) {
-
-  let binary = "";
-  const chunkSize = 0x8000;
-
-  for (
-    let i = 0;
-    i < bytes.length;
-    i += chunkSize
-  ) {
-
-    binary += String.fromCharCode(
-      ...bytes.subarray(i, i + chunkSize)
-    );
-  }
-
-  return Buffer
-    .from(binary, "binary")
-    .toString("base64");
-}
-
-function base64ToUint8(base64) {
-
-  return new Uint8Array(
-    Buffer.from(base64, "base64")
+// Fetch spaces created by a specific user
+app.get('/api/spaces/user/:userEmail', (req, res) => {
+  const email = (req.params.userEmail || '').trim().toLowerCase();
+  const userSpaces = Array.from(registeredSpaces.values()).filter(
+    s => s.createdBy && s.createdBy.toLowerCase() === email
   );
-}
+  return res.json({ success: true, spaces: userSpaces });
+});
+
+// Delete a space and notify active sockets
+app.delete('/api/spaces/:spaceId', (req, res) => {
+  const cleanId = (req.params.spaceId || '').trim().toLowerCase();
+  if (!cleanId) {
+    return res.status(400).json({ error: 'Space ID is required.' });
+  }
+  if (cleanId === 'demo-room') {
+    return res.status(400).json({ error: 'Cannot delete the default demo-room space.' });
+  }
+  if (!registeredSpaces.has(cleanId)) {
+    return res.status(404).json({ error: `Space "${cleanId}" not found.` });
+  }
+
+  const space = registeredSpaces.get(cleanId);
+  const requestedBy = (req.body?.userEmail || req.query?.userEmail || '').trim().toLowerCase();
+  if (requestedBy && space.createdBy && space.createdBy.toLowerCase() !== 'anonymous' && space.createdBy.toLowerCase() !== requestedBy) {
+    return res.status(403).json({ error: 'You do not have permission to delete this space.' });
+  }
+
+  // Remove space and clean up draw history
+  registeredSpaces.delete(cleanId);
+  roomDrawHistory.delete(cleanId);
+  knownSpaces.delete(cleanId);
+
+  // Notify any active clients inside the room
+  io.to(cleanId).emit('space-deleted', { spaceId: cleanId });
+
+  return res.json({ success: true, message: `Space "${cleanId}" was deleted successfully.` });
+});
+
+// --- WEBSOCKET SYNC & MULTI-USER AWARENESS ---
+const io = new Server(server, { cors: { origin: '*', methods: ['GET', 'POST'] } });
+
+io.on('connection', (socket) => {
+  socket.on('join-room', (roomId) => {
+    const targetRoom = (roomId || 'demo-room').trim();
+
+    // Leave any previous room if different
+    if (socket.currentRoom && socket.currentRoom !== targetRoom) {
+      socket.leave(socket.currentRoom);
+      const oldClients = io.sockets.adapter.rooms.get(socket.currentRoom);
+      io.to(socket.currentRoom).emit('room-users', oldClients ? oldClients.size : 0);
+      io.to(socket.currentRoom).emit('user-left', socket.id);
+    }
+
+    socket.currentRoom = targetRoom;
+    socket.join(targetRoom);
+    knownSpaces.add(targetRoom);
+
+    if (!roomDrawHistory.has(targetRoom)) roomDrawHistory.set(targetRoom, []);
+    socket.emit('initial-canvas-state', roomDrawHistory.get(targetRoom));
+
+    const clients = io.sockets.adapter.rooms.get(targetRoom);
+    io.to(targetRoom).emit('room-users', clients ? clients.size : 1);
+  });
+
+  socket.on('leave-room', (roomId) => {
+    const targetRoom = roomId || socket.currentRoom;
+    if (targetRoom) {
+      socket.leave(targetRoom);
+      const clients = io.sockets.adapter.rooms.get(targetRoom);
+      io.to(targetRoom).emit('room-users', clients ? clients.size : 0);
+      io.to(targetRoom).emit('user-left', socket.id);
+      socket.currentRoom = null;
+    }
+  });
+
+  socket.on('canvas-draw', (data) => {
+    const room = data.room || socket.currentRoom || 'demo-room';
+    if (!roomDrawHistory.has(room)) roomDrawHistory.set(room, []);
+    if (data.type === 'clear') roomDrawHistory.set(room, []);
+    else roomDrawHistory.get(room).push(data);
+    socket.to(room).emit('canvas-draw', data);
+  });
+
+  socket.on('cursor-move', (data) => {
+    const room = data.room || socket.currentRoom || 'demo-room';
+    socket.to(room).emit('cursor-move', {
+      socketId: socket.id,
+      x: data.x,
+      y: data.y,
+      user: data.user,
+      color: data.color,
+      avatar: data.avatar || ''
+    });
+  });
+
+  socket.on('code-change', (data) => {
+    const room = (typeof data === 'object' && data.room) ? data.room : (socket.currentRoom || 'demo-room');
+    socket.to(room).emit('code-change', data);
+  });
+
+  socket.on('disconnecting', () => {
+    for (const room of socket.rooms) {
+      if (room !== socket.id) {
+        const clients = io.sockets.adapter.rooms.get(room);
+        const count = clients ? clients.size - 1 : 0;
+        io.to(room).emit('room-users', Math.max(0, count));
+        io.to(room).emit('user-left', socket.id);
+      }
+    }
+  });
+});
+
+const PORT = process.env.PORT || 5000;
+server.listen(PORT, () => {
+  console.log(`SyncSpace Server running on port ${PORT}`);
+  console.log(`Google Sign-In integration: ${process.env.GOOGLE_CLIENT_ID ? 'Configured' : 'Ready (Client ID optional for demo/sandbox)'}`);
+});
