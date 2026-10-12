@@ -38,8 +38,16 @@ function App() {
       }
     };
 
+    const onAllSpacesCleared = () => {
+      if (currentSpace && currentSpace.id !== 'demo-room') {
+        alert('Notice: All custom spaces were reset. Returning to Space Directory.');
+        handleLeaveSpace();
+      }
+    };
+
     socket.on('room-users', onRoomUsers);
     socket.on('space-deleted', onSpaceDeleted);
+    socket.on('all-spaces-cleared', onAllSpacesCleared);
 
     // Save to joinedSpaces in localStorage if user didn't create it
     if (user?.email) {
@@ -66,6 +74,7 @@ function App() {
     return () => {
       socket.off('room-users', onRoomUsers);
       socket.off('space-deleted', onSpaceDeleted);
+      socket.off('all-spaces-cleared', onAllSpacesCleared);
     };
   }, [currentSpace, user]);
 

@@ -3,13 +3,16 @@ import http from 'http';
 import { Server } from 'socket.io';
 import cors from 'cors';
 import dotenv from 'dotenv';
+import mongoose from 'mongoose';
 import authRoutes from './routes/authRoutes.js';
 import { connectDB, userRepository } from './services/db.js';
+import { Document, DocumentUpdate } from './models/Document.js';
 
 dotenv.config();
 
 const app = express();
 const server = http.createServer(app);
+const io = new Server(server, { cors: { origin: '*', methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'] } });
 
 app.use(cors({ origin: '*', methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'] }));
 app.use(express.json());
@@ -20,9 +23,9 @@ connectDB();
 // Mount Authentication APIs
 app.use('/api/auth', authRoutes);
 
-// Space Registry & In-Memory Canvas History per room
+// Space Registry & In-Memory Canvas History per room (demo-room only by default)
 const roomDrawHistory = new Map();
-const knownSpaces = new Set(['demo-room', 'architecture-lab', 'system-design']);
+const knownSpaces = new Set(['demo-room']);
 
 // System Health & Service Status
 app.get('/api/health', (req, res) => {
@@ -35,10 +38,53 @@ app.get('/api/health', (req, res) => {
   });
 });
 
-// Space Registry
+// Space Registry (in-memory Map initialized with only demo-room)
 const registeredSpaces = new Map([
   ['demo-room', { id: 'demo-room', name: 'Demo Room', createdAt: new Date() }]
 ]);
+
+// List all spaces
+app.get('/api/spaces', (req, res) => {
+  return res.json({ success: true, spaces: Array.from(registeredSpaces.values()) });
+});
+
+// Clear all custom spaces created across all Gmail accounts and users
+app.post('/api/spaces/clear-all', async (req, res) => {
+  registeredSpaces.clear();
+  registeredSpaces.set('demo-room', { id: 'demo-room', name: 'Demo Room', createdAt: new Date() });
+  roomDrawHistory.clear();
+  knownSpaces.clear();
+  knownSpaces.add('demo-room');
+
+  try {
+    if (mongoose.connection && mongoose.connection.readyState === 1) {
+      await Document.deleteMany({ docId: { $ne: 'demo-room' } }).catch(() => {});
+      await DocumentUpdate.deleteMany({ docId: { $ne: 'demo-room' } }).catch(() => {});
+    }
+  } catch (e) {
+    // resilient in-memory fallback
+  }
+
+  // Notify all connected clients
+  io.emit('all-spaces-cleared');
+
+  return res.json({
+    success: true,
+    message: 'All custom spaces created till now have been cleared from all Gmail accounts.',
+    spaces: Array.from(registeredSpaces.values())
+  });
+});
+
+// Alias DELETE /api/spaces to clear all custom spaces
+app.delete('/api/spaces', async (req, res) => {
+  registeredSpaces.clear();
+  registeredSpaces.set('demo-room', { id: 'demo-room', name: 'Demo Room', createdAt: new Date() });
+  roomDrawHistory.clear();
+  knownSpaces.clear();
+  knownSpaces.add('demo-room');
+  io.emit('all-spaces-cleared');
+  return res.json({ success: true, message: 'All custom spaces have been cleared.' });
+});
 
 // Verify if a space exists before joining
 app.get('/api/spaces/verify/:spaceId', (req, res) => {
@@ -115,8 +161,6 @@ app.delete('/api/spaces/:spaceId', (req, res) => {
 });
 
 // --- WEBSOCKET SYNC & MULTI-USER AWARENESS ---
-const io = new Server(server, { cors: { origin: '*', methods: ['GET', 'POST'] } });
-
 io.on('connection', (socket) => {
   socket.on('join-room', (roomId) => {
     const targetRoom = (roomId || 'demo-room').trim();

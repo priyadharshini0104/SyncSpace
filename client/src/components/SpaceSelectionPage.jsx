@@ -1,4 +1,21 @@
 import React, { useState, useEffect } from 'react';
+import socket from '../socket';
+
+// Helper to remove all custom spaces across all Gmail accounts and users
+export function purgeAllSpacesFromLocalStorage() {
+  try {
+    const keysToRemove = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (k && (k.startsWith('syncspace_my_spaces_') || k.startsWith('syncspace_joined_spaces_'))) {
+        keysToRemove.push(k);
+      }
+    }
+    keysToRemove.forEach(k => localStorage.removeItem(k));
+  } catch (err) {
+    console.error('Failed to clean spaces from localStorage:', err);
+  }
+}
 
 export default function SpaceSelectionPage({ user, onSelectSpace, onLogout }) {
   const [createName, setCreateName] = useState('Architecture Sprint');
@@ -7,12 +24,22 @@ export default function SpaceSelectionPage({ user, onSelectSpace, onLogout }) {
   
   const [loadingJoin, setLoadingJoin] = useState(false);
   const [loadingCreate, setLoadingCreate] = useState(false);
+  const [clearingAll, setClearingAll] = useState(false);
   const [joinError, setJoinError] = useState('');
   const [createError, setCreateError] = useState('');
   const [copiedId, setCopiedId] = useState(null);
 
   const storageKey = 'syncspace_my_spaces_' + (user?.email || 'guest');
   const joinedStorageKey = 'syncspace_joined_spaces_' + (user?.email || 'guest');
+
+  // Automatic Migration: One-time purge of all custom spaces across all Gmail IDs
+  try {
+    const PURGE_KEY = 'syncspace_spaces_purged_all_v2';
+    if (!localStorage.getItem(PURGE_KEY)) {
+      purgeAllSpacesFromLocalStorage();
+      localStorage.setItem(PURGE_KEY, 'true');
+    }
+  } catch {}
 
   // Load created spaces from local storage and sync with server
   const [mySpaces, setMySpaces] = useState(() => {
@@ -138,28 +165,67 @@ export default function SpaceSelectionPage({ user, onSelectSpace, onLogout }) {
     }
   };
 
+  // Strict server sync: do not resurrect deleted spaces from localStorage
   useEffect(() => {
     if (user?.email) {
       fetch(`http://localhost:5000/api/spaces/user/${encodeURIComponent(user.email)}`)
         .then((res) => res.json())
         .then((data) => {
           if (data.spaces && Array.isArray(data.spaces)) {
-            setMySpaces((prev) => {
-              const combined = [...data.spaces];
-              // merge any local ones not on server
-              prev.forEach(p => {
-                if (!combined.some(c => c.id === p.id)) {
-                  combined.push(p);
-                }
-              });
-              localStorage.setItem(storageKey, JSON.stringify(combined));
-              return combined;
-            });
+            setMySpaces(data.spaces);
+            try {
+              localStorage.setItem(storageKey, JSON.stringify(data.spaces));
+            } catch {}
           }
         })
         .catch(() => {});
     }
   }, [user?.email, storageKey]);
+
+  // Real-time listener: immediately clear local spaces when an admin/user wipes all spaces
+  useEffect(() => {
+    const handleAllCleared = () => {
+      purgeAllSpacesFromLocalStorage();
+      setMySpaces([]);
+      setJoinedSpaces([{ id: 'demo-room', name: 'Demo Room', joinedAt: new Date().toISOString() }]);
+    };
+
+    socket.on('all-spaces-cleared', handleAllCleared);
+    return () => {
+      socket.off('all-spaces-cleared', handleAllCleared);
+    };
+  }, []);
+
+  // Clear all spaces created across all Gmail accounts
+  const handleClearAllSpaces = async () => {
+    const confirmed = window.confirm(
+      'Are you sure you want to remove ALL spaces created till now across ALL Gmail accounts? ' +
+      'This will permanently delete every custom space and leave only the default Demo Room.'
+    );
+    if (!confirmed) return;
+
+    setClearingAll(true);
+    try {
+      const res = await fetch('http://localhost:5000/api/spaces/clear-all', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' }
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        alert(data.error || 'Failed to clear spaces on server.');
+        return;
+      }
+
+      purgeAllSpacesFromLocalStorage();
+      setMySpaces([]);
+      setJoinedSpaces([{ id: 'demo-room', name: 'Demo Room', joinedAt: new Date().toISOString() }]);
+      alert('All custom spaces created till now have been permanently removed from all Gmail accounts.');
+    } catch (err) {
+      alert('Could not connect to server to clear spaces.');
+    } finally {
+      setClearingAll(false);
+    }
+  };
 
   const handleGenerateId = () => {
     setCreateId('space-' + Math.floor(1000 + Math.random() * 9000));
@@ -337,31 +403,57 @@ export default function SpaceSelectionPage({ user, onSelectSpace, onLogout }) {
           </p>
         </div>
 
-        {/* Filter Pills */}
-        <div style={{ display: 'flex', gap: '8px', marginBottom: '24px', flexWrap: 'wrap' }}>
+        {/* Filter Pills & Directory Actions */}
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px', flexWrap: 'wrap', gap: '12px' }}>
+          <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+            <button
+              type="button"
+              onClick={() => setActiveTab('all')}
+              className={activeTab === 'all' ? 'button-primary' : 'button-secondary'}
+              style={{ padding: '6px 18px', fontSize: '13px' }}
+            >
+              All Spaces ({mySpaces.length + joinedSpaces.length})
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveTab('created')}
+              className={activeTab === 'created' ? 'button-primary' : 'button-secondary'}
+              style={{ padding: '6px 18px', fontSize: '13px' }}
+            >
+              Created by You ({mySpaces.length})
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveTab('joined')}
+              className={activeTab === 'joined' ? 'button-primary' : 'button-secondary'}
+              style={{ padding: '6px 18px', fontSize: '13px' }}
+            >
+              Joined Spaces ({joinedSpaces.length})
+            </button>
+          </div>
+
           <button
             type="button"
-            onClick={() => setActiveTab('all')}
-            className={activeTab === 'all' ? 'button-primary' : 'button-secondary'}
-            style={{ padding: '6px 18px', fontSize: '13px' }}
+            onClick={handleClearAllSpaces}
+            disabled={clearingAll}
+            className="button-secondary"
+            style={{
+              padding: '6px 16px',
+              fontSize: '12px',
+              color: '#dc2626',
+              borderColor: '#fecaca',
+              backgroundColor: '#fff5f5',
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '6px'
+            }}
+            title="Remove all custom spaces created across all Gmail IDs and accounts"
           >
-            All Spaces ({mySpaces.length + joinedSpaces.length})
-          </button>
-          <button
-            type="button"
-            onClick={() => setActiveTab('created')}
-            className={activeTab === 'created' ? 'button-primary' : 'button-secondary'}
-            style={{ padding: '6px 18px', fontSize: '13px' }}
-          >
-            Created by You ({mySpaces.length})
-          </button>
-          <button
-            type="button"
-            onClick={() => setActiveTab('joined')}
-            className={activeTab === 'joined' ? 'button-primary' : 'button-secondary'}
-            style={{ padding: '6px 18px', fontSize: '13px' }}
-          >
-            Joined Spaces ({joinedSpaces.length})
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <polyline points="3 6 5 6 21 6"></polyline>
+              <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+            </svg>
+            {clearingAll ? 'Clearing All Spaces...' : 'Clear All Spaces'}
           </button>
         </div>
 
