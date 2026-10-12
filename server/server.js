@@ -27,6 +27,16 @@ app.use('/api/auth', authRoutes);
 const roomDrawHistory = new Map();
 const knownSpaces = new Set(['demo-room']);
 
+// Real-Time Room Participants Registry: roomId -> Map(socketId -> userData)
+const roomParticipants = new Map();
+
+function broadcastRoomAwareness(roomId) {
+  const participantsMap = roomParticipants.get(roomId);
+  const participantsList = participantsMap ? Array.from(participantsMap.values()) : [];
+  io.to(roomId).emit('room-collaborators', participantsList);
+  io.to(roomId).emit('room-users', participantsList.length);
+}
+
 // System Health & Service Status
 app.get('/api/health', (req, res) => {
   const dbStatus = userRepository.getStatus();
@@ -55,6 +65,7 @@ app.post('/api/spaces/clear-all', async (req, res) => {
   roomDrawHistory.clear();
   knownSpaces.clear();
   knownSpaces.add('demo-room');
+  roomParticipants.clear();
 
   try {
     if (mongoose.connection && mongoose.connection.readyState === 1) {
@@ -82,6 +93,7 @@ app.delete('/api/spaces', async (req, res) => {
   roomDrawHistory.clear();
   knownSpaces.clear();
   knownSpaces.add('demo-room');
+  roomParticipants.clear();
   io.emit('all-spaces-cleared');
   return res.json({ success: true, message: 'All custom spaces have been cleared.' });
 });
@@ -153,6 +165,7 @@ app.delete('/api/spaces/:spaceId', (req, res) => {
   registeredSpaces.delete(cleanId);
   roomDrawHistory.delete(cleanId);
   knownSpaces.delete(cleanId);
+  roomParticipants.delete(cleanId);
 
   // Notify any active clients inside the room
   io.to(cleanId).emit('space-deleted', { spaceId: cleanId });
@@ -162,34 +175,70 @@ app.delete('/api/spaces/:spaceId', (req, res) => {
 
 // --- WEBSOCKET SYNC & MULTI-USER AWARENESS ---
 io.on('connection', (socket) => {
-  socket.on('join-room', (roomId) => {
-    const targetRoom = (roomId || 'demo-room').trim();
+  socket.on('join-room', (payload) => {
+    let targetRoom = 'demo-room';
+    let userInfo = {
+      name: 'Collaborator',
+      email: '',
+      avatar: '',
+      color: '#000000'
+    };
+
+    if (typeof payload === 'string') {
+      targetRoom = (payload || 'demo-room').trim();
+    } else if (payload && typeof payload === 'object') {
+      targetRoom = (payload.roomId || 'demo-room').trim();
+      if (payload.user) {
+        userInfo = {
+          name: payload.user.name || payload.user.displayName || 'Collaborator',
+          email: payload.user.email || '',
+          avatar: payload.user.avatar || '',
+          color: payload.color || payload.user.color || '#000000'
+        };
+      }
+    }
 
     // Leave any previous room if different
     if (socket.currentRoom && socket.currentRoom !== targetRoom) {
-      socket.leave(socket.currentRoom);
-      const oldClients = io.sockets.adapter.rooms.get(socket.currentRoom);
-      io.to(socket.currentRoom).emit('room-users', oldClients ? oldClients.size : 0);
-      io.to(socket.currentRoom).emit('user-left', socket.id);
+      const oldRoom = socket.currentRoom;
+      socket.leave(oldRoom);
+      if (roomParticipants.has(oldRoom)) {
+        roomParticipants.get(oldRoom).delete(socket.id);
+        broadcastRoomAwareness(oldRoom);
+      }
+      io.to(oldRoom).emit('user-left', socket.id);
     }
 
     socket.currentRoom = targetRoom;
+    socket.userData = {
+      id: socket.id,
+      socketId: socket.id,
+      ...userInfo,
+      joinedAt: new Date().toISOString()
+    };
+
     socket.join(targetRoom);
     knownSpaces.add(targetRoom);
+
+    if (!roomParticipants.has(targetRoom)) {
+      roomParticipants.set(targetRoom, new Map());
+    }
+    roomParticipants.get(targetRoom).set(socket.id, socket.userData);
 
     if (!roomDrawHistory.has(targetRoom)) roomDrawHistory.set(targetRoom, []);
     socket.emit('initial-canvas-state', roomDrawHistory.get(targetRoom));
 
-    const clients = io.sockets.adapter.rooms.get(targetRoom);
-    io.to(targetRoom).emit('room-users', clients ? clients.size : 1);
+    broadcastRoomAwareness(targetRoom);
   });
 
   socket.on('leave-room', (roomId) => {
     const targetRoom = roomId || socket.currentRoom;
     if (targetRoom) {
       socket.leave(targetRoom);
-      const clients = io.sockets.adapter.rooms.get(targetRoom);
-      io.to(targetRoom).emit('room-users', clients ? clients.size : 0);
+      if (roomParticipants.has(targetRoom)) {
+        roomParticipants.get(targetRoom).delete(socket.id);
+        broadcastRoomAwareness(targetRoom);
+      }
       io.to(targetRoom).emit('user-left', socket.id);
       socket.currentRoom = null;
     }
@@ -205,6 +254,17 @@ io.on('connection', (socket) => {
 
   socket.on('cursor-move', (data) => {
     const room = data.room || socket.currentRoom || 'demo-room';
+    if (socket.userData) {
+      if (data.user) socket.userData.name = data.user;
+      if (data.avatar) socket.userData.avatar = data.avatar;
+      if (data.color) socket.userData.color = data.color;
+      if (roomParticipants.has(room)) {
+        roomParticipants.get(room).set(socket.id, {
+          ...socket.userData,
+          lastActive: Date.now()
+        });
+      }
+    }
     socket.to(room).emit('cursor-move', {
       socketId: socket.id,
       x: data.x,
@@ -223,9 +283,14 @@ io.on('connection', (socket) => {
   socket.on('disconnecting', () => {
     for (const room of socket.rooms) {
       if (room !== socket.id) {
-        const clients = io.sockets.adapter.rooms.get(room);
-        const count = clients ? clients.size - 1 : 0;
-        io.to(room).emit('room-users', Math.max(0, count));
+        if (roomParticipants.has(room)) {
+          roomParticipants.get(room).delete(socket.id);
+          broadcastRoomAwareness(room);
+        } else {
+          const clients = io.sockets.adapter.rooms.get(room);
+          const count = clients ? clients.size - 1 : 0;
+          io.to(room).emit('room-users', Math.max(0, count));
+        }
         io.to(room).emit('user-left', socket.id);
       }
     }

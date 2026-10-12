@@ -4,12 +4,16 @@ import SpaceSelectionPage from './components/SpaceSelectionPage';
 import CanvasBoard from './components/CanvasBoard';
 import CodeEditor from './components/CodeEditor';
 import SessionReplayBar from './components/SessionReplayBar';
+import CollaboratorsModal from './components/CollaboratorsModal';
 import { authService } from './utils/authService';
 import socket from './socket';
 
 function App() {
   const [replayFrame, setReplayFrame] = useState(0);
   const [peerCount, setPeerCount] = useState(1);
+  const [collaborators, setCollaborators] = useState([]);
+  const [showCollaboratorsModal, setShowCollaboratorsModal] = useState(false);
+  const [workspaceView, setWorkspaceView] = useState('split'); // 'split' | 'canvas' | 'code'
   const [user, setUser] = useState(() => authService.getUser());
   const [currentSpace, setCurrentSpace] = useState(null); // { id: string, name: string } | null
   const [copiedNotification, setCopiedNotification] = useState(false);
@@ -25,11 +29,24 @@ function App() {
   useEffect(() => {
     if (!currentSpace) return;
 
-    socket.emit('join-room', currentSpace.id);
+    socket.emit('join-room', {
+      roomId: currentSpace.id,
+      user: user
+    });
 
     const onRoomUsers = (count) => {
       setPeerCount(count);
     };
+
+    const onRoomCollaborators = (participants) => {
+      if (Array.isArray(participants)) {
+        setCollaborators(participants);
+        setPeerCount(participants.length);
+      }
+    };
+
+    socket.on('room-users', onRoomUsers);
+    socket.on('room-collaborators', onRoomCollaborators);
 
     const onSpaceDeleted = (data) => {
       if (currentSpace && data.spaceId === currentSpace.id) {
@@ -73,6 +90,7 @@ function App() {
 
     return () => {
       socket.off('room-users', onRoomUsers);
+      socket.off('room-collaborators', onRoomCollaborators);
       socket.off('space-deleted', onSpaceDeleted);
       socket.off('all-spaces-cleared', onAllSpacesCleared);
     };
@@ -162,22 +180,44 @@ function App() {
     );
   }
 
-  // --- VIEW 3: LIVE COLLABORATIVE SPACE WORKSPACE ---
+  // Fallback list of collaborators if socket awareness hasn't populated yet
+  const activeCollaboratorsList = collaborators.length > 0 ? collaborators : [
+    {
+      id: socket.id || 'self',
+      name: user?.name || 'You',
+      email: user?.email || '',
+      avatar: user?.avatar || '',
+      color: '#000000',
+      joinedAt: new Date().toISOString()
+    }
+  ];
+
+  const collaboratorCount = collaborators.length > 0 ? collaborators.length : peerCount;
+
+  // --- VIEW 3: LIVE COLLABORATIVE SPACE WORKSPACE (DESIGN.md COMPLIANT) ---
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', background: '#0f172a', color: '#fff', fontFamily: 'Inter, system-ui, sans-serif' }}>
-      {/* SyncSpace Monochrome Top Chrome */}
+    <div style={{
+      display: 'flex',
+      flexDirection: 'column',
+      height: '100vh',
+      backgroundColor: '#ffffff',
+      color: '#000000',
+      fontFamily: 'Inter, system-ui, sans-serif'
+    }}>
+      {/* SyncSpace DESIGN.md Monochrome Top Chrome */}
       <header style={{
         display: 'flex',
         justifyContent: 'space-between',
         alignItems: 'center',
-        padding: '8px 24px',
-        borderBottom: '1px solid #1e293b',
-        background: '#0b0f19',
-        boxShadow: '0 2px 8px rgba(0,0,0,0.4)',
-        zIndex: 10
+        padding: '10px 24px',
+        borderBottom: '1px solid #e5e7eb',
+        backgroundColor: '#ffffff',
+        zIndex: 10,
+        gap: '16px',
+        flexWrap: 'wrap'
       }}>
-        {/* Left: Brand + Back to Spaces Pill */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+        {/* Left: Brand + Back to Spaces Pill + Space Info */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
           <button
             onClick={handleLeaveSpace}
             className="button-secondary"
@@ -185,9 +225,6 @@ function App() {
               padding: '6px 16px',
               fontSize: '13px',
               borderRadius: '9999px',
-              background: '#1e293b',
-              color: '#ffffff',
-              border: '1px solid #334155',
               cursor: 'pointer'
             }}
             title="Leave this space and choose or create another"
@@ -195,37 +232,37 @@ function App() {
             &larr; All Spaces
           </button>
 
-          <div style={{ height: '20px', width: '1px', backgroundColor: '#334155' }} />
+          <div style={{ height: '20px', width: '1px', backgroundColor: '#e5e7eb' }} />
 
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
             <div style={{
-              width: '24px',
-              height: '24px',
+              width: '28px',
+              height: '28px',
               borderRadius: '9999px',
-              background: '#000000',
-              border: '1px solid #334155',
+              backgroundColor: '#000000',
+              color: '#ffffff',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
               fontWeight: 'bold',
-              fontSize: '12px'
+              fontSize: '13px'
             }}>
               S
             </div>
             <div>
-              <div style={{ fontSize: '14px', fontWeight: '700', color: '#f8fafc', display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <div style={{ fontSize: '15px', fontWeight: '700', color: '#000000', display: 'flex', alignItems: 'center', gap: '8px' }}>
                 <span>{currentSpace.name}</span>
                 <span 
                   onClick={handleCopySpaceCode}
                   style={{
-                    fontFamily: 'JetBrains Mono, monospace',
+                    fontFamily: 'var(--font-mono, monospace)',
                     fontSize: '11px',
-                    backgroundColor: '#1e293b',
-                    color: '#94a3b8',
+                    backgroundColor: '#f3f4f6',
+                    color: '#4b5563',
                     padding: '2px 8px',
                     borderRadius: '9999px',
                     cursor: 'pointer',
-                    border: '1px solid #334155'
+                    border: '1px solid #e5e7eb'
                   }}
                   title="Click to copy space ID"
                 >
@@ -234,19 +271,10 @@ function App() {
                 {currentSpace.id !== 'demo-room' && (
                   <button
                     onClick={handleDeleteCurrentSpace}
+                    className="button-danger"
                     style={{
-                      background: 'rgba(239, 68, 68, 0.15)',
-                      color: '#f87171',
-                      border: '1px solid rgba(239, 68, 68, 0.35)',
                       padding: '2px 10px',
-                      borderRadius: '9999px',
-                      cursor: 'pointer',
-                      fontSize: '11px',
-                      fontWeight: '600',
-                      display: 'inline-flex',
-                      alignItems: 'center',
-                      gap: '4px',
-                      marginLeft: '6px'
+                      fontSize: '11px'
                     }}
                     title="Permanently delete this space"
                   >
@@ -257,38 +285,130 @@ function App() {
             </div>
           </div>
         </div>
+
+        {/* Center: Workspace View Switcher (DESIGN.md Pill Segmented Control) */}
+        <div style={{
+          display: 'flex',
+          alignItems: 'center',
+          backgroundColor: '#f3f4f6',
+          padding: '3px',
+          borderRadius: '9999px',
+          border: '1px solid #e5e7eb',
+          gap: '2px'
+        }}>
+          {[
+            { id: 'canvas', label: '🎨 Whiteboard' },
+            { id: 'split', label: '⚡ Split View' },
+            { id: 'code', label: '💻 Code Editor' }
+          ].map((mode) => {
+            const isActive = workspaceView === mode.id;
+            return (
+              <button
+                key={mode.id}
+                type="button"
+                onClick={() => setWorkspaceView(mode.id)}
+                style={{
+                  padding: '5px 14px',
+                  borderRadius: '9999px',
+                  border: 'none',
+                  backgroundColor: isActive ? '#000000' : 'transparent',
+                  color: isActive ? '#ffffff' : '#4b5563',
+                  fontSize: '12px',
+                  fontWeight: '600',
+                  cursor: 'pointer',
+                  transition: 'all 0.12s ease'
+                }}
+              >
+                {mode.label}
+              </button>
+            );
+          })}
+        </div>
         
-        {/* Right: Peer Count & User Info */}
-        <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
+        {/* Right: Interactive Collaborators Pill, Profile, & Sign Out */}
+        <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+          {/* CRDT Mint Badge */}
           <span style={{
-            background: 'rgba(5, 150, 105, 0.2)',
-            color: '#34d399',
-            border: '1px solid rgba(5, 150, 105, 0.4)',
-            padding: '3px 12px',
+            backgroundColor: 'var(--color-block-mint, #c7f5db)',
+            color: '#065f46',
+            border: '1px solid rgba(16, 185, 129, 0.3)',
+            padding: '4px 12px',
             borderRadius: '9999px',
             fontSize: '11px',
             fontWeight: '600',
-            display: 'flex',
+            display: 'inline-flex',
             alignItems: 'center',
             gap: '6px'
           }}>
-            <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: '#10b981', display: 'inline-block' }}></span>
+            <span style={{ width: '6px', height: '6px', borderRadius: '50%', backgroundColor: '#10b981', display: 'inline-block' }} />
             CRDT Active
           </span>
 
-          <span style={{ fontSize: '12px', color: '#94a3b8', background: '#1e293b', padding: '3px 12px', borderRadius: '9999px' }}>
-            {peerCount} {peerCount === 1 ? 'collaborator' : 'collaborators'}
-          </span>
+          {/* INTERACTIVE COLLABORATORS BUTTON */}
+          <button
+            type="button"
+            onClick={() => setShowCollaboratorsModal(true)}
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '8px',
+              backgroundColor: '#f3f4f6',
+              border: '1px solid #e5e7eb',
+              padding: '4px 12px 4px 8px',
+              borderRadius: '9999px',
+              cursor: 'pointer',
+              transition: 'background-color 0.15s ease, border-color 0.15s ease'
+            }}
+            title="Click to view all collaborators in this space"
+          >
+            {/* Overlapping Avatar Stack */}
+            <div style={{ display: 'flex', alignItems: 'center', marginLeft: '2px' }}>
+              {activeCollaboratorsList.slice(0, 3).map((c, i) => (
+                <img
+                  key={c.id || c.socketId || i}
+                  src={c.avatar || `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(c.name || 'User')}`}
+                  alt=""
+                  style={{
+                    width: '20px',
+                    height: '20px',
+                    borderRadius: '50%',
+                    objectFit: 'cover',
+                    marginLeft: i > 0 ? '-6px' : '0',
+                    border: '1.5px solid #ffffff',
+                    backgroundColor: '#ffffff'
+                  }}
+                  onError={(e) => {
+                    e.target.src = `https://api.dicebear.com/7.x/initials/svg?seed=User`;
+                  }}
+                />
+              ))}
+            </div>
+
+            <span style={{ fontSize: '12px', fontWeight: '600', color: '#111827' }}>
+              {collaboratorCount} {collaboratorCount === 1 ? 'Collaborator' : 'Collaborators'}
+            </span>
+
+            <span style={{
+              fontSize: '10px',
+              backgroundColor: '#000000',
+              color: '#ffffff',
+              padding: '1px 6px',
+              borderRadius: '9999px',
+              fontWeight: '700'
+            }}>
+              View ▾
+            </span>
+          </button>
 
           {/* User Profile Pill */}
           <div style={{
             display: 'flex',
             alignItems: 'center',
             gap: '8px',
-            background: '#1e293b',
+            backgroundColor: '#ffffff',
             padding: '4px 10px 4px 6px',
             borderRadius: '9999px',
-            border: '1px solid #334155'
+            border: '1px solid #e5e7eb'
           }}>
             <img
               src={user.avatar || `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(user.name)}`}
@@ -303,13 +423,13 @@ function App() {
                 e.target.src = `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(user.name)}`;
               }}
             />
-            <span style={{ fontSize: '12px', fontWeight: '600', color: '#f8fafc' }}>
+            <span style={{ fontSize: '12px', fontWeight: '600', color: '#111827' }}>
               {user.name}
             </span>
 
             <span style={{
-              background: user.provider === 'google' || user.provider === 'both' ? 'rgba(66, 133, 244, 0.2)' : 'rgba(59, 130, 246, 0.2)',
-              color: user.provider === 'google' || user.provider === 'both' ? '#60a5fa' : '#93c5fd',
+              backgroundColor: user.provider === 'google' || user.provider === 'both' ? '#e0f2fe' : '#f3f4f6',
+              color: user.provider === 'google' || user.provider === 'both' ? '#0369a1' : '#4b5563',
               fontSize: '10px',
               padding: '1px 6px',
               borderRadius: '9999px',
@@ -321,15 +441,11 @@ function App() {
 
           <button
             onClick={handleLogout}
+            className="button-secondary"
             style={{
-              background: 'rgba(239, 68, 68, 0.15)',
-              color: '#f87171',
-              border: '1px solid rgba(239, 68, 68, 0.3)',
-              padding: '5px 12px',
-              borderRadius: '9999px',
-              cursor: 'pointer',
+              padding: '6px 14px',
               fontSize: '12px',
-              fontWeight: '600'
+              borderRadius: '9999px'
             }}
           >
             Sign Out
@@ -337,27 +453,51 @@ function App() {
         </div>
       </header>
 
-      {/* Session Replay Scrubber */}
-      <div style={{ padding: '0 16px', background: '#111827' }}>
+      {/* Session Replay Scrubber Container (Monochrome) */}
+      <div style={{ padding: '4px 20px', backgroundColor: '#fcfcfc', borderBottom: '1px solid #e5e7eb' }}>
         <SessionReplayBar totalSnapshots={50} onSeek={(frame) => setReplayFrame(frame)} />
       </div>
 
-      {/* Dual Pane Collaborative Workspace */}
-      <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
-        {/* Left: Whiteboard Canvas */}
-        <div style={{ flex: 1, borderRight: '2px solid #1e293b', position: 'relative' }}>
-          <CanvasBoard
-            roomId={currentSpace.id}
-            currentUser={user}
-            replayFrame={replayFrame}
-          />
-        </div>
+      {/* Dual Pane / Responsive Collaborative Workspace */}
+      <div style={{ display: 'flex', flex: 1, overflow: 'hidden', backgroundColor: '#ffffff' }}>
+        {/* Whiteboard Canvas Pane */}
+        {(workspaceView === 'split' || workspaceView === 'canvas') && (
+          <div style={{
+            flex: workspaceView === 'canvas' ? 1 : (workspaceView === 'split' ? 1 : 0),
+            borderRight: workspaceView === 'split' ? '1px solid #e5e7eb' : 'none',
+            position: 'relative',
+            height: '100%'
+          }}>
+            <CanvasBoard
+              roomId={currentSpace.id}
+              currentUser={user}
+              replayFrame={replayFrame}
+            />
+          </div>
+        )}
 
-        {/* Right: Monaco / Real-Time Code Buffer */}
-        <div style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
-          <CodeEditor roomId={currentSpace.id} />
-        </div>
+        {/* Monaco / Real-Time Code Buffer Pane */}
+        {(workspaceView === 'split' || workspaceView === 'code') && (
+          <div style={{
+            flex: workspaceView === 'code' ? 1 : (workspaceView === 'split' ? 1 : 0),
+            display: 'flex',
+            flexDirection: 'column',
+            height: '100%'
+          }}>
+            <CodeEditor roomId={currentSpace.id} />
+          </div>
+        )}
       </div>
+
+      {/* Collaborators Modal Popover */}
+      <CollaboratorsModal
+        isOpen={showCollaboratorsModal}
+        onClose={() => setShowCollaboratorsModal(false)}
+        collaborators={activeCollaboratorsList}
+        currentUser={user}
+        roomId={currentSpace.id}
+        roomName={currentSpace.name}
+      />
     </div>
   );
 }

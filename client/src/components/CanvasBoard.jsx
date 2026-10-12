@@ -27,8 +27,12 @@ const CanvasBoard = ({ replayFrame, currentUser, roomId = 'demo-room' }) => {
     ctx.fillStyle = '#ffffff';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-    // Join room when component mounts or roomId changes
-    socket.emit('join-room', targetRoom);
+    // Join room when component mounts or roomId changes with user awareness
+    socket.emit('join-room', {
+      roomId: targetRoom,
+      user: currentUser,
+      color: myCursorColor
+    });
 
     const onInitialState = (items) => {
       if (Array.isArray(items)) {
@@ -70,13 +74,26 @@ const CanvasBoard = ({ replayFrame, currentUser, roomId = 'demo-room' }) => {
     socket.on('cursor-move', onCursorMove);
     socket.on('user-left', onUserLeft);
 
+    const handleResize = () => {
+      if (!canvas || !canvas.parentElement) return;
+      const prevImage = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      canvas.width = canvas.parentElement.clientWidth;
+      canvas.height = canvas.parentElement.clientHeight;
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.putImageData(prevImage, 0, 0);
+    };
+
+    window.addEventListener('resize', handleResize);
+
     return () => {
+      window.removeEventListener('resize', handleResize);
       socket.off('initial-canvas-state', onInitialState);
       socket.off('canvas-draw', onCanvasDraw);
       socket.off('cursor-move', onCursorMove);
       socket.off('user-left', onUserLeft);
     };
-  }, [targetRoom]);
+  }, [targetRoom, currentUser]);
 
   const renderShape = (ctx, item) => {
     ctx.strokeStyle = item.color || '#000000';
@@ -194,6 +211,8 @@ const CanvasBoard = ({ replayFrame, currentUser, roomId = 'demo-room' }) => {
   };
 
   const clearCanvas = () => {
+    const confirmed = window.confirm('Are you sure you want to clear the whiteboard canvas for all collaborators?');
+    if (!confirmed) return;
     const canvas = canvasRef.current;
     const ctx = canvas.getContext('2d');
     ctx.fillStyle = '#ffffff';
@@ -202,19 +221,41 @@ const CanvasBoard = ({ replayFrame, currentUser, roomId = 'demo-room' }) => {
     setHistory([]);
   };
 
+  const exportCanvas = () => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const imageUri = canvas.toDataURL('image/png');
+    const link = document.createElement('a');
+    link.download = `syncspace-${targetRoom}-diagram.png`;
+    link.href = imageUri;
+    link.click();
+  };
+
+  const curatedColors = [
+    { label: 'Black Ink', value: '#000000' },
+    { label: 'Magenta Promo', value: '#ff2e93' },
+    { label: 'Block Lilac', value: '#8b5cf6' },
+    { label: 'Block Mint', value: '#10b981' },
+    { label: 'Block Coral', value: '#f59e0b' },
+    { label: 'System Blue', value: '#3b82f6' }
+  ];
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', background: '#ffffff', position: 'relative' }}>
-      {/* SyncSpace Pill Design Toolbar */}
+      {/* SyncSpace DESIGN.md Floating Pill Toolbar */}
       <div style={{
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'space-between',
-        padding: '8px 16px',
+        padding: '10px 20px',
         background: '#ffffff',
         borderBottom: '1px solid #e5e7eb',
-        zIndex: 10
+        zIndex: 10,
+        gap: '12px',
+        flexWrap: 'wrap'
       }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+        {/* Drawing Tools Pills */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
           {[
             { id: 'pen', label: '✏️ Pen' },
             { id: 'rect', label: '▭ Rectangle' },
@@ -222,90 +263,187 @@ const CanvasBoard = ({ replayFrame, currentUser, roomId = 'demo-room' }) => {
             { id: 'diamond', label: '◇ Diamond' },
             { id: 'text', label: '🔤 Text' },
             { id: 'eraser', label: '🧹 Eraser' }
-          ].map((t) => (
-            <button
-              key={t.id}
-              onClick={() => setTool(t.id)}
+          ].map((t) => {
+            const isActive = tool === t.id;
+            return (
+              <button
+                key={t.id}
+                onClick={() => setTool(t.id)}
+                className={isActive ? 'button-primary' : 'button-secondary'}
+                style={{
+                  padding: '6px 14px',
+                  fontSize: '12px',
+                  borderRadius: '9999px',
+                  boxShadow: isActive ? '0 2px 6px rgba(0,0,0,0.12)' : 'none'
+                }}
+              >
+                {t.label}
+              </button>
+            );
+          })}
+
+          <div style={{ height: '20px', width: '1px', backgroundColor: '#e5e7eb', margin: '0 4px' }} />
+
+          {/* Line Width Selector Pills */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+            {[
+              { width: 2, label: 'Fine' },
+              { width: 4, label: 'Medium' },
+              { width: 8, label: 'Bold' }
+            ].map((s) => (
+              <button
+                key={s.width}
+                type="button"
+                onClick={() => setLineWidth(s.width)}
+                style={{
+                  padding: '4px 10px',
+                  borderRadius: '9999px',
+                  fontSize: '11px',
+                  fontWeight: '600',
+                  border: lineWidth === s.width ? '1px solid #000000' : '1px solid #e5e7eb',
+                  backgroundColor: lineWidth === s.width ? '#000000' : '#ffffff',
+                  color: lineWidth === s.width ? '#ffffff' : '#4b5563',
+                  cursor: 'pointer'
+                }}
+              >
+                {s.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Color Palette & Actions */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '4px 8px', borderRadius: '9999px', backgroundColor: '#f9fafb', border: '1px solid #e5e7eb' }}>
+            {curatedColors.map((c) => (
+              <button
+                key={c.value}
+                type="button"
+                onClick={() => setStrokeColor(c.value)}
+                style={{
+                  width: '20px',
+                  height: '20px',
+                  borderRadius: '50%',
+                  backgroundColor: c.value,
+                  border: strokeColor === c.value ? '2px solid #000000' : '1px solid rgba(0,0,0,0.15)',
+                  transform: strokeColor === c.value ? 'scale(1.15)' : 'scale(1)',
+                  cursor: 'pointer',
+                  transition: 'transform 0.1s ease',
+                  padding: 0
+                }}
+                title={c.label}
+              />
+            ))}
+            <input
+              type="color"
+              value={strokeColor}
+              onChange={(e) => setStrokeColor(e.target.value)}
               style={{
-                padding: '6px 14px',
-                borderRadius: '9999px',
-                border: tool === t.id ? '1px solid #000000' : '1px solid #e5e7eb',
-                background: tool === t.id ? '#000000' : '#ffffff',
-                color: tool === t.id ? '#ffffff' : '#1f2937',
-                fontSize: '12px',
-                fontWeight: '500',
+                width: '22px',
+                height: '22px',
+                border: 'none',
+                borderRadius: '50%',
                 cursor: 'pointer',
-                transition: 'all 0.1s ease'
+                background: 'transparent',
+                padding: 0
               }}
-            >
-              {t.label}
-            </button>
-          ))}
+              title="Custom Color"
+            />
+          </div>
+
           <button
+            type="button"
+            onClick={exportCanvas}
+            className="button-secondary"
+            style={{ padding: '6px 14px', fontSize: '12px' }}
+            title="Download high-resolution image of this whiteboard diagram"
+          >
+            💾 Export PNG
+          </button>
+
+          <button
+            type="button"
             onClick={clearCanvas}
             style={{
               padding: '6px 14px',
               borderRadius: '9999px',
               border: '1px solid #fecaca',
-              background: '#fee2e2',
-              color: '#b91c1c',
+              background: '#fff1f2',
+              color: '#e11d48',
               fontSize: '12px',
               fontWeight: '500',
               cursor: 'pointer'
             }}
+            title="Clear the whiteboard canvas"
           >
             🗑 Clear
           </button>
         </div>
-
-        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-          <input
-            type="color"
-            value={strokeColor}
-            onChange={(e) => setStrokeColor(e.target.value)}
-            style={{
-              width: '24px',
-              height: '24px',
-              border: 'none',
-              borderRadius: '50%',
-              cursor: 'pointer',
-              background: 'transparent'
-            }}
-            title="Stroke Color"
-          />
-          <span className="caption" style={{ color: '#6b7280' }}>
-            SPACE: {targetRoom}
-          </span>
-        </div>
       </div>
 
-      <div style={{ flex: 1, position: 'relative', width: '100%', height: '100%', overflow: 'hidden' }}>
+      {/* Canvas Area with Editorial Dot-Grid Surface */}
+      <div style={{
+        flex: 1,
+        position: 'relative',
+        width: '100%',
+        height: '100%',
+        overflow: 'hidden',
+        backgroundColor: '#ffffff',
+        backgroundImage: 'radial-gradient(#e5e7eb 1.5px, transparent 1.5px)',
+        backgroundSize: '24px 24px'
+      }}>
         <canvas
           ref={canvasRef}
           onMouseDown={handleMouseDown}
           onMouseMove={handlePointerMove}
           onMouseUp={handleMouseUp}
           onMouseLeave={handleMouseUp}
-          style={{ display: 'block', width: '100%', height: '100%', cursor: tool === 'text' ? 'text' : 'crosshair' }}
+          style={{
+            display: 'block',
+            width: '100%',
+            height: '100%',
+            cursor: tool === 'text' ? 'text' : (tool === 'eraser' ? 'cell' : 'crosshair')
+          }}
         />
 
+        {/* Collaborative Multi-User Remote Cursors */}
         {Object.entries(remoteCursors).map(([id, cursor]) => (
-          <div key={id} style={{ position: 'absolute', left: `${cursor.x}px`, top: `${cursor.y}px`, pointerEvents: 'none', display: 'flex', alignItems: 'center', gap: '4px', zIndex: 50 }}>
-            <svg width="20" height="20" viewBox="0 0 24 24" fill={cursor.color}><path d="M3 3l7 18 3-7 7-3L3 3z" /></svg>
+          <div
+            key={id}
+            style={{
+              position: 'absolute',
+              left: `${cursor.x}px`,
+              top: `${cursor.y}px`,
+              pointerEvents: 'none',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '4px',
+              zIndex: 50,
+              transition: 'left 0.04s linear, top 0.04s linear'
+            }}
+          >
+            <svg width="22" height="22" viewBox="0 0 24 24" fill={cursor.color}>
+              <path d="M3 3l7 18 3-7 7-3L3 3z" />
+            </svg>
             <div style={{
               display: 'flex',
               alignItems: 'center',
-              gap: '5px',
-              background: cursor.color,
+              gap: '6px',
+              backgroundColor: cursor.color,
               color: '#ffffff',
               fontSize: '11px',
-              padding: '2px 8px',
+              padding: '3px 10px',
               borderRadius: '9999px',
-              fontWeight: 'bold',
-              boxShadow: '0 2px 4px rgba(0,0,0,0.15)'
+              fontWeight: '600',
+              boxShadow: '0 4px 12px rgba(0,0,0,0.18)',
+              border: '1.5px solid #ffffff'
             }}>
               {cursor.avatar && (
-                <img src={cursor.avatar} alt="" style={{ width: '14px', height: '14px', borderRadius: '50%', objectFit: 'cover' }} />
+                <img
+                  src={cursor.avatar}
+                  alt=""
+                  style={{ width: '14px', height: '14px', borderRadius: '50%', objectFit: 'cover' }}
+                />
               )}
               <span>{cursor.user}</span>
             </div>

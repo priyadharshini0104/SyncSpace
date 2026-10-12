@@ -40,31 +40,50 @@ const SessionReplayBar = ({ totalSnapshots = 100, onSeek, onPlayToggle }) => {
     <div style={{
       display: 'flex',
       alignItems: 'center',
-      gap: '12px',
-      padding: '10px 16px',
-      background: '#1e1e2e',
-      color: '#fff',
-      borderRadius: '8px',
-      margin: '10px 0',
-      border: '1px solid #3b4252'
+      gap: '14px',
+      padding: '8px 20px',
+      background: '#ffffff',
+      color: '#000000',
+      borderRadius: '9999px',
+      margin: '6px 0',
+      border: '1px solid #e5e7eb',
+      boxShadow: '0 2px 8px rgba(0,0,0,0.03)'
     }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+        <span style={{
+          width: '7px',
+          height: '7px',
+          borderRadius: '50%',
+          backgroundColor: '#10b981',
+          display: 'inline-block'
+        }} />
+        <span className="caption" style={{ color: '#6b7280', fontSize: '10px' }}>
+          SESSION REPLAY
+        </span>
+      </div>
+
       <button
         onClick={togglePlay}
+        className="button-primary"
         style={{
-          background: isPlaying ? '#ef4444' : '#10b981',
-          border: 'none',
-          color: '#fff',
-          padding: '6px 14px',
-          borderRadius: '4px',
-          cursor: 'pointer',
-          fontWeight: 'bold'
+          padding: '5px 14px',
+          fontSize: '12px',
+          borderRadius: '9999px',
+          backgroundColor: isPlaying ? '#e11d48' : '#000000',
+          color: '#ffffff'
         }}
       >
-        {isPlaying ? 'Pause' : 'Play'}
+        {isPlaying ? '⏸ Pause' : '▶ Play'}
       </button>
 
-      <span style={{ fontSize: '13px', minWidth: '55px' }}>
-        {currentFrame} / {totalSnapshots}
+      <span style={{
+        fontFamily: 'var(--font-mono, monospace)',
+        fontSize: '12px',
+        color: '#374151',
+        minWidth: '70px',
+        fontWeight: '500'
+      }}>
+        {currentFrame.toString().padStart(2, '0')} / {totalSnapshots}
       </span>
 
       <input
@@ -73,21 +92,23 @@ const SessionReplayBar = ({ totalSnapshots = 100, onSeek, onPlayToggle }) => {
         max={totalSnapshots}
         value={currentFrame}
         onChange={handleSliderChange}
-        style={{ flex: 1, cursor: 'pointer' }}
+        style={{
+          flex: 1,
+          cursor: 'pointer',
+          accentColor: '#000000'
+        }}
       />
 
       <button
         onClick={() => { setCurrentFrame(0); if (onSeek) onSeek(0); }}
+        className="button-secondary"
         style={{
-          background: '#374151',
-          border: 'none',
-          color: '#d1d5db',
-          padding: '6px 10px',
-          borderRadius: '4px',
-          cursor: 'pointer'
+          padding: '5px 12px',
+          fontSize: '12px',
+          borderRadius: '9999px'
         }}
       >
-        Rewind
+        ⏮ Rewind
       </button>
     </div>
   );
