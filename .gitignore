@@ -1,1 +1,28 @@
+# Dependencies
 node_modules/
+client/node_modules/
+server/node_modules/
+
+# Environment Variables (Client & Server Security)
+.env
+*.env
+.env.local
+.env.*.local
+client/.env
+server/.env
+client/*.env
+server/*.env
+
+# Build outputs
+dist/
+client/dist/
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# OS Files
+.DS_Store
+Thumbs.db

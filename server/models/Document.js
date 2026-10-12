@@ -1,4 +1,4 @@
-const mongoose = require('mongoose');
+import mongoose from 'mongoose';
 
 // The Replay Buffer Schema (Stores individual incremental updates)
 const DocumentUpdateSchema = new mongoose.Schema(
@@ -92,4 +92,6 @@ DocumentSchema.static.getUpdatesSince = async function(docId, contextVersion) {
   }).sort({version: 1});
 }
 
-module.exports = mongoose.model('Document', DocumentSchema);
+const Document = mongoose.model('Document', DocumentSchema);
+export { DocumentUpdate, Document };
+export default Document;

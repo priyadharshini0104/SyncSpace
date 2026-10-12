@@ -1,20 +1,22 @@
 import React, { useRef, useState, useEffect } from 'react';
 import socket from '../socket';
 
-const currentUserId = 'User #' + Math.random().toString(36).substring(2, 6).toUpperCase();
-const userColors = ['#f43f5e', '#8b5cf6', '#06b6d4', '#10b981', '#f59e0b'];
+const generatedId = 'User #' + Math.random().toString(36).substring(2, 6).toUpperCase();
+const userColors = ['#f43f5e', '#8b5cf6', '#06b6d4', '#10b981', '#f59e0b', '#ec4899'];
 const myCursorColor = userColors[Math.floor(Math.random() * userColors.length)];
 
-const CanvasBoard = ({ replayFrame }) => {
+const CanvasBoard = ({ replayFrame, currentUser, roomId = 'demo-room' }) => {
   const canvasRef = useRef(null);
   const [tool, setTool] = useState('pen');
-  const [strokeColor, setStrokeColor] = useState('#2563eb');
+  const [strokeColor, setStrokeColor] = useState('#000000');
   const [lineWidth, setLineWidth] = useState(3);
   const [isDrawing, setIsDrawing] = useState(false);
   const [startPos, setStartPos] = useState({ x: 0, y: 0 });
   const [snapshot, setSnapshot] = useState(null);
   const [history, setHistory] = useState([]);
   const [remoteCursors, setRemoteCursors] = useState({});
+
+  const targetRoom = roomId || 'demo-room';
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -25,50 +27,65 @@ const CanvasBoard = ({ replayFrame }) => {
     ctx.fillStyle = '#ffffff';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-    socket.on('initial-canvas-state', (items) => {
+    // Join room when component mounts or roomId changes
+    socket.emit('join-room', targetRoom);
+
+    const onInitialState = (items) => {
       if (Array.isArray(items)) {
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
         items.forEach((item) => renderShape(ctx, item));
         setHistory(items);
       }
-    });
+    };
 
-    socket.on('canvas-draw', (item) => {
-      renderShape(ctx, item);
-      setHistory((prev) => [...prev, item]);
-    });
+    const onCanvasDraw = (item) => {
+      if (item.type === 'clear') {
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        setHistory([]);
+      } else {
+        renderShape(ctx, item);
+        setHistory((prev) => [...prev, item]);
+      }
+    };
 
-    socket.on('cursor-move', (data) => {
+    const onCursorMove = (data) => {
       setRemoteCursors((prev) => ({
         ...prev,
-        [data.socketId]: { x: data.x, y: data.y, user: data.user, color: data.color }
+        [data.socketId]: { x: data.x, y: data.y, user: data.user, color: data.color, avatar: data.avatar }
       }));
-    });
+    };
 
-    socket.on('user-left', (id) => {
+    const onUserLeft = (id) => {
       setRemoteCursors((prev) => {
         const copy = { ...prev };
         delete copy[id];
         return copy;
       });
-    });
+    };
+
+    socket.on('initial-canvas-state', onInitialState);
+    socket.on('canvas-draw', onCanvasDraw);
+    socket.on('cursor-move', onCursorMove);
+    socket.on('user-left', onUserLeft);
 
     return () => {
-      socket.off('initial-canvas-state');
-      socket.off('canvas-draw');
-      socket.off('cursor-move');
-      socket.off('user-left');
+      socket.off('initial-canvas-state', onInitialState);
+      socket.off('canvas-draw', onCanvasDraw);
+      socket.off('cursor-move', onCursorMove);
+      socket.off('user-left', onUserLeft);
     };
-  }, []);
+  }, [targetRoom]);
 
   const renderShape = (ctx, item) => {
-    ctx.strokeStyle = item.color || '#2563eb';
-    ctx.fillStyle = item.color || '#2563eb';
+    ctx.strokeStyle = item.color || '#000000';
+    ctx.fillStyle = item.color || '#000000';
     ctx.lineWidth = item.width || 3;
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
 
     const { type, x0, y0, x1, y1, text } = item;
-
     if (type === 'line') {
       ctx.beginPath();
       ctx.moveTo(x0, y0);
@@ -77,14 +94,14 @@ const CanvasBoard = ({ replayFrame }) => {
     } else if (type === 'rect') {
       ctx.strokeRect(x0, y0, x1 - x0, y1 - y0);
     } else if (type === 'circle') {
-      const radius = Math.sqrt(Math.pow(x1 - x0, 2) + Math.pow(y1 - y0, 2));
       ctx.beginPath();
+      const radius = Math.sqrt(Math.pow(x1 - x0, 2) + Math.pow(y1 - y0, 2));
       ctx.arc(x0, y0, radius, 0, 2 * Math.PI);
       ctx.stroke();
     } else if (type === 'diamond') {
+      ctx.beginPath();
       const midX = (x0 + x1) / 2;
       const midY = (y0 + y1) / 2;
-      ctx.beginPath();
       ctx.moveTo(midX, y0);
       ctx.lineTo(x1, midY);
       ctx.lineTo(midX, y1);
@@ -92,7 +109,7 @@ const CanvasBoard = ({ replayFrame }) => {
       ctx.closePath();
       ctx.stroke();
     } else if (type === 'text') {
-      ctx.font = 'bold 16px sans-serif';
+      ctx.font = 'bold 16px Inter, sans-serif';
       ctx.fillText(text, x0, y0);
     } else if (type === 'clear') {
       ctx.fillStyle = '#ffffff';
@@ -107,7 +124,9 @@ const CanvasBoard = ({ replayFrame }) => {
 
   const handlePointerMove = (e) => {
     const { x, y } = getCoords(e);
-    socket.emit('cursor-move', { room: 'demo-room', x, y, user: currentUserId, color: myCursorColor });
+    const activeName = (typeof currentUser === 'object' ? currentUser?.name : currentUser) || generatedId;
+    const activeAvatar = (typeof currentUser === 'object' ? currentUser?.avatar : '') || '';
+    socket.emit('cursor-move', { room: targetRoom, x, y, user: activeName, color: myCursorColor, avatar: activeAvatar });
 
     if (!isDrawing) return;
     const canvas = canvasRef.current;
@@ -117,7 +136,7 @@ const CanvasBoard = ({ replayFrame }) => {
       ctx.lineTo(x, y);
       ctx.stroke();
       const item = {
-        room: 'demo-room',
+        room: targetRoom,
         type: 'line',
         x0: startPos.x,
         y0: startPos.y,
@@ -140,7 +159,7 @@ const CanvasBoard = ({ replayFrame }) => {
     if (tool === 'text') {
       const text = prompt('Enter text for whiteboard:');
       if (text) {
-        const item = { room: 'demo-room', type: 'text', text, x0: x, y0: y, color: strokeColor };
+        const item = { room: targetRoom, type: 'text', text, x0: x, y0: y, color: strokeColor };
         const ctx = canvasRef.current.getContext('2d');
         renderShape(ctx, item);
         socket.emit('canvas-draw', item);
@@ -168,7 +187,7 @@ const CanvasBoard = ({ replayFrame }) => {
     setIsDrawing(false);
     const { x, y } = getCoords(e);
     if (tool !== 'pen' && tool !== 'eraser') {
-      const item = { room: 'demo-room', type: tool, x0: startPos.x, y0: startPos.y, x1: x, y1: y, color: strokeColor, width: lineWidth };
+      const item = { room: targetRoom, type: tool, x0: startPos.x, y0: startPos.y, x1: x, y1: y, color: strokeColor, width: lineWidth };
       socket.emit('canvas-draw', item);
       setHistory((prev) => [...prev, item]);
     }
@@ -179,21 +198,85 @@ const CanvasBoard = ({ replayFrame }) => {
     const ctx = canvas.getContext('2d');
     ctx.fillStyle = '#ffffff';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
-    socket.emit('canvas-draw', { room: 'demo-room', type: 'clear' });
+    socket.emit('canvas-draw', { room: targetRoom, type: 'clear' });
     setHistory([]);
   };
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', background: '#ffffff', position: 'relative' }}>
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', padding: '8px 12px', background: '#f8fafc', borderBottom: '1px solid #e2e8f0' }}>
-        <button onClick={() => setTool('pen')} style={{ padding: '5px 10px', borderRadius: '4px', background: tool === 'pen' ? '#2563eb' : '#e2e8f0', color: tool === 'pen' ? '#fff' : '#000', border: 'none', cursor: 'pointer', fontWeight: 'bold' }}>✏️ Pen</button>
-        <button onClick={() => setTool('rect')} style={{ padding: '5px 10px', borderRadius: '4px', background: tool === 'rect' ? '#2563eb' : '#e2e8f0', color: tool === 'rect' ? '#fff' : '#000', border: 'none', cursor: 'pointer', fontWeight: 'bold' }}>▭ Rect</button>
-        <button onClick={() => setTool('circle')} style={{ padding: '5px 10px', borderRadius: '4px', background: tool === 'circle' ? '#2563eb' : '#e2e8f0', color: tool === 'circle' ? '#fff' : '#000', border: 'none', cursor: 'pointer', fontWeight: 'bold' }}>⭕ Circle</button>
-        <button onClick={() => setTool('diamond')} style={{ padding: '5px 10px', borderRadius: '4px', background: tool === 'diamond' ? '#2563eb' : '#e2e8f0', color: tool === 'diamond' ? '#fff' : '#000', border: 'none', cursor: 'pointer', fontWeight: 'bold' }}>◇ Diamond</button>
-        <button onClick={() => setTool('text')} style={{ padding: '5px 10px', borderRadius: '4px', background: tool === 'text' ? '#2563eb' : '#e2e8f0', color: tool === 'text' ? '#fff' : '#000', border: 'none', cursor: 'pointer', fontWeight: 'bold' }}>🔤 Text</button>
-        <button onClick={() => setTool('eraser')} style={{ padding: '5px 10px', borderRadius: '4px', background: tool === 'eraser' ? '#ef4444' : '#e2e8f0', color: tool === 'eraser' ? '#fff' : '#000', border: 'none', cursor: 'pointer', fontWeight: 'bold' }}>🧹 Eraser</button>
-        <button onClick={clearCanvas} style={{ padding: '5px 10px', borderRadius: '4px', background: '#64748b', color: '#fff', border: 'none', cursor: 'pointer', fontWeight: 'bold' }}>🗑 Clear</button>
-        <input type="color" value={strokeColor} onChange={(e) => setStrokeColor(e.target.value)} style={{ width: '28px', height: '28px', border: 'none', cursor: 'pointer' }} />
+      {/* SyncSpace Pill Design Toolbar */}
+      <div style={{
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        padding: '8px 16px',
+        background: '#ffffff',
+        borderBottom: '1px solid #e5e7eb',
+        zIndex: 10
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+          {[
+            { id: 'pen', label: '✏️ Pen' },
+            { id: 'rect', label: '▭ Rectangle' },
+            { id: 'circle', label: '⭕ Circle' },
+            { id: 'diamond', label: '◇ Diamond' },
+            { id: 'text', label: '🔤 Text' },
+            { id: 'eraser', label: '🧹 Eraser' }
+          ].map((t) => (
+            <button
+              key={t.id}
+              onClick={() => setTool(t.id)}
+              style={{
+                padding: '6px 14px',
+                borderRadius: '9999px',
+                border: tool === t.id ? '1px solid #000000' : '1px solid #e5e7eb',
+                background: tool === t.id ? '#000000' : '#ffffff',
+                color: tool === t.id ? '#ffffff' : '#1f2937',
+                fontSize: '12px',
+                fontWeight: '500',
+                cursor: 'pointer',
+                transition: 'all 0.1s ease'
+              }}
+            >
+              {t.label}
+            </button>
+          ))}
+          <button
+            onClick={clearCanvas}
+            style={{
+              padding: '6px 14px',
+              borderRadius: '9999px',
+              border: '1px solid #fecaca',
+              background: '#fee2e2',
+              color: '#b91c1c',
+              fontSize: '12px',
+              fontWeight: '500',
+              cursor: 'pointer'
+            }}
+          >
+            🗑 Clear
+          </button>
+        </div>
+
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+          <input
+            type="color"
+            value={strokeColor}
+            onChange={(e) => setStrokeColor(e.target.value)}
+            style={{
+              width: '24px',
+              height: '24px',
+              border: 'none',
+              borderRadius: '50%',
+              cursor: 'pointer',
+              background: 'transparent'
+            }}
+            title="Stroke Color"
+          />
+          <span className="caption" style={{ color: '#6b7280' }}>
+            SPACE: {targetRoom}
+          </span>
+        </div>
       </div>
 
       <div style={{ flex: 1, position: 'relative', width: '100%', height: '100%', overflow: 'hidden' }}>
@@ -209,7 +292,23 @@ const CanvasBoard = ({ replayFrame }) => {
         {Object.entries(remoteCursors).map(([id, cursor]) => (
           <div key={id} style={{ position: 'absolute', left: `${cursor.x}px`, top: `${cursor.y}px`, pointerEvents: 'none', display: 'flex', alignItems: 'center', gap: '4px', zIndex: 50 }}>
             <svg width="20" height="20" viewBox="0 0 24 24" fill={cursor.color}><path d="M3 3l7 18 3-7 7-3L3 3z" /></svg>
-            <span style={{ background: cursor.color, color: '#fff', fontSize: '11px', padding: '2px 8px', borderRadius: '12px', fontWeight: 'bold' }}>{cursor.user}</span>
+            <div style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '5px',
+              background: cursor.color,
+              color: '#ffffff',
+              fontSize: '11px',
+              padding: '2px 8px',
+              borderRadius: '9999px',
+              fontWeight: 'bold',
+              boxShadow: '0 2px 4px rgba(0,0,0,0.15)'
+            }}>
+              {cursor.avatar && (
+                <img src={cursor.avatar} alt="" style={{ width: '14px', height: '14px', borderRadius: '50%', objectFit: 'cover' }} />
+              )}
+              <span>{cursor.user}</span>
+            </div>
           </div>
         ))}
       </div>
