@@ -337,3 +337,7 @@ input {
   }
 
 }
+/* M2: Improve user awareness bar spacing */
+.m2-awareness-bar {
+  gap: 12px;
+}
