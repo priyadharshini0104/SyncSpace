@@ -1,0 +1,21 @@
+.m2-awareness-bar {
+  display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:12px;
+  box-sizing:border-box; width:100%; padding:12px 16px; margin:0 0 14px;
+  color:#1f2937; background:#fff; border:1px solid #e5e7eb; border-radius:12px;
+  box-shadow:0 2px 8px rgba(15,23,42,.04);
+}
+.m2-awareness-title { display:flex; align-items:center; gap:8px; font-size:14px; white-space:nowrap; }
+.m2-online-indicator { width:9px; height:9px; flex:0 0 9px; background:#22c55e; border-radius:50%; }
+.m2-member-count { min-width:22px; padding:3px 7px; background:#f3f4f6; border-radius:999px; font-size:12px; text-align:center; }
+.m2-awareness-list { display:flex; align-items:center; flex-wrap:wrap; gap:14px; }
+.m2-member { display:inline-flex; align-items:center; gap:7px; min-width:0; }
+.m2-avatar { position:relative; display:inline-flex; align-items:center; justify-content:center; width:32px; height:32px; flex:0 0 32px; color:#fff; background:var(--m2-user-color,#64748b); border-radius:50%; font-size:11px; font-weight:700; }
+.m2-avatar-online { position:absolute; right:-1px; bottom:-1px; width:9px; height:9px; background:#22c55e; border:2px solid #fff; border-radius:50%; }
+.m2-member-name { color:#374151; font-size:13px; overflow-wrap:anywhere; }
+.m2-member-name small { color:#6b7280; font-size:11px; }
+.m2-empty-members { color:#6b7280; font-size:13px; }
+.m2-cursor-overlay { position:absolute; top:0; left:0; z-index:20; overflow:hidden; pointer-events:none; }
+.m2-remote-cursor { position:absolute; display:flex; flex-direction:column; align-items:flex-start; pointer-events:none; transform:translate(-1px,-1px); transition:left 45ms linear,top 45ms linear; will-change:left,top; }
+.m2-cursor-arrow { display:block; filter:drop-shadow(0 1px 1px rgba(0,0,0,.16)); }
+.m2-cursor-label { display:inline-block; max-width:150px; margin:1px 0 0 12px; padding:4px 8px; overflow:hidden; color:#fff; background:var(--m2-user-color,#64748b); border-radius:5px; font-size:11px; font-weight:600; line-height:1.3; text-overflow:ellipsis; white-space:nowrap; box-shadow:0 2px 6px rgba(15,23,42,.18); }
+@media(max-width:640px) { .m2-awareness-bar { align-items:flex-start; } .m2-awareness-list { gap:10px; } }
