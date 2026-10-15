@@ -1,0 +1,60 @@
+# SyncSpace M2 — User Awareness Bar + Cursor Overlay
+
+## Files in this pack
+- `client/src/components/UserAwarenessBar.jsx`: online members, avatar initials, names, count.
+- `client/src/components/RemoteCursorOverlay.jsx`: remote cursor pointer and user name tag.
+- `client/src/components/M2Awareness.css`: styles.
+
+## 1. Copy
+Copy the `components` folder into your existing project at `client/src/components/`.
+
+## 2. Add imports to `client/src/App.jsx`
+```jsx
+import UserAwarenessBar from "./components/UserAwarenessBar";
+import RemoteCursorOverlay from "./components/RemoteCursorOverlay";
+```
+
+## 3. Keep existing states and socket listeners
+Your App already has `users` and `remoteCursors` state and listeners for `users-update`, `awareness-update`, and `awareness-remove`. Keep those; do not add duplicate listeners. The cursor data must have `id`, `name`, `x`, and `y`.
+
+## 4. Add the awareness bar
+In the main application JSX, immediately after the closing `</header>` and before `<main className="workspace">`, add:
+```jsx
+<UserAwarenessBar users={users} currentName={name} />
+```
+
+## 5. Overlay the cursor on the existing Stage
+Find your existing `<Stage ...>...</Stage>`. Keep its existing drawing layers and handlers, but place it inside a positioned wrapper. Render `RemoteCursorOverlay` immediately after Stage, as its sibling:
+```jsx
+<div style={{ position: "relative", width: BOARD_WIDTH, height: BOARD_HEIGHT, margin: "0 auto" }}>
+  {/* Keep your existing Stage and all its existing contents here. */}
+  <Stage width={BOARD_WIDTH} height={BOARD_HEIGHT}
+    onMouseDown={handlePointerDown}
+    onMouseMove={handlePointerMove}
+    onMouseUp={handlePointerUp}>
+    {/* Do not delete your existing Layer/shapes. */}
+  </Stage>
+  <RemoteCursorOverlay cursors={remoteCursors}
+    boardWidth={BOARD_WIDTH} boardHeight={BOARD_HEIGHT} />
+</div>
+```
+This is a placement example, not a replacement for your Stage. Keep your actual handler names. The Stage and overlay must have the same top-left origin and coordinate system.
+
+## 6. Test
+From the project root:
+```bash
+git switch m2
+cd client
+npm run dev
+```
+Open two browser windows and join the same room using different names. Verify the members bar, count, cursor tags, and disconnect behavior. Check that drawing and Monaco still work.
+
+## 7. Commit and push
+From the repository root:
+```bash
+git status
+git add client/src/App.jsx client/src/components/UserAwarenessBar.jsx client/src/components/RemoteCursorOverlay.jsx client/src/components/M2Awareness.css
+git commit -m "feat: add user awareness bar and remote cursor overlay"
+git push origin m2
+```
+
