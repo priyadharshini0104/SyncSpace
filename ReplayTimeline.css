@@ -1,0 +1,152 @@
+.replay-panel {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 18px;
+  margin-top: 16px;
+  border: 1px solid #303747;
+  border-radius: 14px;
+  background: #151923;
+  color: #f1f5f9;
+  font-family: Arial, sans-serif;
+}
+
+.replay-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 24px;
+}
+
+.replay-header h3 {
+  margin: 0 0 6px;
+  font-size: 18px;
+}
+
+.replay-header p {
+  margin: 0;
+  color: #9ca3af;
+  font-size: 13px;
+}
+
+.replay-count {
+  padding: 6px 10px;
+  border-radius: 7px;
+  background: #252d3c;
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.replay-timeline {
+  padding: 0 4px;
+}
+
+.timeline-labels {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  color: #aab4c5;
+  font-size: 12px;
+  margin-bottom: 12px;
+}
+
+.timeline-slider {
+  width: 100%;
+  accent-color: #818cf8;
+  cursor: pointer;
+}
+
+.timeline-slider:disabled {
+  cursor: not-allowed;
+}
+
+.timeline-markers {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin-top: 10px;
+  min-height: 12px;
+}
+
+.timeline-marker {
+  flex: 1;
+  min-width: 3px;
+  height: 5px;
+  padding: 0;
+  border: none;
+  border-radius: 5px;
+  background: #3b4557;
+  cursor: pointer;
+}
+
+.timeline-marker.active {
+  background: #818cf8;
+  height: 8px;
+}
+
+.replay-controls {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 24px;
+}
+
+.replay-controls button {
+  min-width: 42px;
+  min-height: 38px;
+  padding: 8px 12px;
+  border: 1px solid #394355;
+  border-radius: 8px;
+  background: #222a39;
+  color: #f8fafc;
+  cursor: pointer;
+  font-size: 14px;
+}
+
+.replay-controls button:hover:not(:disabled) {
+  background: #354157;
+}
+
+.replay-controls button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.replay-controls .replay-play {
+  min-width: 100px;
+  background: #4f46e5;
+  border-color: #6366f1;
+}
+
+.replay-controls .replay-play:hover:not(:disabled) {
+  background: #4338ca;
+}
+
+.replay-footer {
+  display: flex;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 20px;
+  padding-top: 14px;
+  border-top: 1px solid #303747;
+  color: #9ca3af;
+  font-size: 12px;
+}
+
+@media (max-width: 480px) {
+  .replay-panel {
+    padding: 12px;
+  }
+
+  .replay-controls {
+    gap: 6px;
+  }
+
+  .replay-controls button {
+    min-width: 36px;
+    padding: 8px;
+  }
+}
