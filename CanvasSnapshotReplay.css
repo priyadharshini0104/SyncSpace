@@ -1,0 +1,56 @@
+.snapshot-replay {
+  box-sizing: border-box;
+  width: 100%;
+  padding: 20px;
+  border: 1px solid #303747;
+  border-radius: 14px;
+  background: #151923;
+  color: #f1f5f9;
+  font-family: Arial, sans-serif;
+}
+.snapshot-replay__header,
+.snapshot-replay__meta,
+.snapshot-replay__actions,
+.snapshot-replay__details {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.snapshot-replay__header { margin-bottom: 22px; }
+.snapshot-replay__eyebrow {
+  margin: 0 0 7px; color: #a5b4fc; font-size: 11px;
+  font-weight: 700; letter-spacing: .12em;
+}
+.snapshot-replay__header h2 { margin: 0 0 6px; font-size: 20px; }
+.snapshot-replay__subtitle { margin: 0; color: #9ca3af; font-size: 13px; }
+.snapshot-replay button {
+  padding: 9px 12px; border: 1px solid #394355; border-radius: 8px;
+  background: #222a39; color: #f8fafc; cursor: pointer;
+}
+.snapshot-replay button:hover:not(:disabled) { background: #354157; }
+.snapshot-replay button:disabled { cursor: not-allowed; opacity: .4; }
+.snapshot-replay__empty {
+  padding: 20px; border: 1px dashed #475569; border-radius: 10px;
+  color: #cbd5e1; text-align: center; line-height: 1.5;
+}
+.snapshot-replay__meta {
+  flex-wrap: wrap; color: #cbd5e1; font-size: 12px; margin-bottom: 12px;
+}
+.snapshot-replay__slider { display: block; width: 100%; accent-color: #818cf8; }
+.snapshot-replay__actions { justify-content: center; flex-wrap: wrap; margin-top: 20px; }
+.snapshot-replay .snapshot-replay__primary { background: #4f46e5; border-color: #6366f1; }
+.snapshot-replay__details {
+  flex-wrap: wrap; justify-content: flex-start; margin-top: 20px;
+  padding-top: 14px; border-top: 1px solid #303747; color: #aab4c5; font-size: 12px;
+}
+.snapshot-replay__details strong { color: #f1f5f9; }
+.snapshot-replay__details code {
+  padding: 4px 6px; border-radius: 5px; background: #252d3c; overflow-wrap: anywhere;
+}
+@media (max-width: 480px) {
+  .snapshot-replay { padding: 13px; }
+  .snapshot-replay__header { align-items: flex-start; }
+  .snapshot-replay__header h2 { font-size: 18px; }
+  .snapshot-replay__actions { gap: 7px; }
+}
